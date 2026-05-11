@@ -24,7 +24,7 @@ APP_TITLE = "Basic Timer"
 WIDGET_WIDTH = 360
 FULL_HEIGHT = 270
 COMPACT_HEIGHT = 184
-QUICK_MINUTES = (5, 10, 25, 50, 60)
+DEFAULT_QUICK_MINUTES = (5, 10, 25, 50, 60)
 MAX_MINUTES = 999
 MAX_TOTAL_SECONDS = MAX_MINUTES * 60 + 59
 READY_COLOR = "#f7f0df"
@@ -74,6 +74,8 @@ class TimerWidget(tk.Tk):
 
         self.duration_minutes = tk.StringVar(value="25")
         self.duration_seconds = tk.StringVar(value="0")
+        self.quick_minutes = list(DEFAULT_QUICK_MINUTES)
+        self.quick_minute_vars = []
         self.status_text = tk.StringVar(value="준비")
         self.pin_text = tk.StringVar(value="Pin")
         self.compact_button_text = tk.StringVar(value="Mini")
@@ -137,6 +139,7 @@ class TimerWidget(tk.Tk):
             self.sound_repeat.set(max(1, min(10, int(self._state.get("sound_repeat", self.sound_repeat.get())))))
         except (TypeError, ValueError):
             self.sound_repeat.set(3)
+        self.quick_minutes = self._normalize_quick_minutes(self._state.get("quick_minutes", DEFAULT_QUICK_MINUTES))
         minutes = str(self._state.get("minutes", self.duration_minutes.get()))
         seconds = str(self._state.get("seconds", self.duration_seconds.get()))
         self.duration_minutes.set(minutes)
@@ -307,12 +310,9 @@ class TimerWidget(tk.Tk):
         self.controls = tk.Frame(self.shell, bg="#161616")
         self.controls.pack(fill="x", padx=12)
 
-        quick_row = tk.Frame(self.controls, bg="#161616")
-        quick_row.pack(fill="x", pady=(0, 7))
-        for column, minutes in enumerate(QUICK_MINUTES):
-            quick_row.grid_columnconfigure(column, weight=1, uniform="quick-minutes")
-            button = self._split_minute_button(quick_row, minutes)
-            button.grid(row=0, column=column, sticky="ew", padx=2)
+        self.quick_row = tk.Frame(self.controls, bg="#161616")
+        self.quick_row.pack(fill="x", pady=(0, 7))
+        self._render_quick_buttons()
 
         custom_row = tk.Frame(
             self.controls,
@@ -526,6 +526,16 @@ class TimerWidget(tk.Tk):
         button.bind("<Button-1>", lambda event, widget=button: self._click_split_minute_button(widget, event.x))
         return button
 
+    def _render_quick_buttons(self):
+        if not hasattr(self, "quick_row"):
+            return
+        for child in self.quick_row.winfo_children():
+            child.destroy()
+        for column, minutes in enumerate(self.quick_minutes):
+            self.quick_row.grid_columnconfigure(column, weight=1, uniform="quick-minutes")
+            button = self._split_minute_button(self.quick_row, minutes)
+            button.grid(row=0, column=column, sticky="ew", padx=2)
+
     def _draw_split_minute_button(self, button):
         button.delete("all")
         width = max(1, button.winfo_width())
@@ -615,6 +625,37 @@ class TimerWidget(tk.Tk):
             fg="#aaa395",
             font=("Malgun Gothic", 8),
         ).pack(side="left", padx=(8, 0))
+
+        tk.Label(
+            panel,
+            text="빠른 버튼",
+            bg="#161616",
+            fg="#f7f0df",
+            font=("Malgun Gothic", 10, "bold"),
+        ).pack(anchor="w", pady=(12, 0))
+        quick_settings_row = tk.Frame(panel, bg="#161616")
+        quick_settings_row.pack(fill="x", pady=(5, 0))
+        self.quick_minute_vars = [tk.StringVar(value=str(value)) for value in self.quick_minutes]
+        quick_validation = (self.register(self.validate_quick_minute_input), "%P")
+        for variable in self.quick_minute_vars:
+            entry = tk.Entry(
+                quick_settings_row,
+                textvariable=variable,
+                width=4,
+                justify="center",
+                bg="#202020",
+                fg="#f7f0df",
+                insertbackground="#f7f0df",
+                relief="flat",
+                font=("Segoe UI", 9),
+                validate="key",
+                validatecommand=quick_validation,
+            )
+            entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        quick_action_row = tk.Frame(panel, bg="#161616")
+        quick_action_row.pack(fill="x", pady=(6, 0))
+        self._settings_button(quick_action_row, "적용", self.apply_quick_minute_settings).pack(side="left")
+        self._settings_button(quick_action_row, "기본값", self.reset_quick_minute_settings).pack(side="left", padx=(8, 0))
 
         tk.Label(
             panel,
@@ -727,6 +768,42 @@ class TimerWidget(tk.Tk):
         self.sound_mode.set("custom")
         self._save_state()
 
+    def _normalize_quick_minutes(self, values):
+        normalized = []
+        if not isinstance(values, (list, tuple)):
+            values = DEFAULT_QUICK_MINUTES
+        for value in values:
+            try:
+                minutes = int(str(value).strip())
+            except (TypeError, ValueError):
+                continue
+            minutes = max(1, min(MAX_MINUTES, minutes))
+            normalized.append(minutes)
+            if len(normalized) == len(DEFAULT_QUICK_MINUTES):
+                break
+        while len(normalized) < len(DEFAULT_QUICK_MINUTES):
+            normalized.append(DEFAULT_QUICK_MINUTES[len(normalized)])
+        return normalized
+
+    def apply_quick_minute_settings(self):
+        values = [variable.get() for variable in self.quick_minute_vars]
+        self.quick_minutes = self._normalize_quick_minutes(values)
+        for variable, minutes in zip(self.quick_minute_vars, self.quick_minutes):
+            variable.set(str(minutes))
+        self._render_quick_buttons()
+        self.status_text.set("빠른 버튼 적용")
+        self._update_display()
+        self._save_state()
+
+    def reset_quick_minute_settings(self):
+        self.quick_minutes = list(DEFAULT_QUICK_MINUTES)
+        for variable, minutes in zip(self.quick_minute_vars, self.quick_minutes):
+            variable.set(str(minutes))
+        self._render_quick_buttons()
+        self.status_text.set("빠른 버튼 기본값")
+        self._update_display()
+        self._save_state()
+
     def startup_shortcut_path(self):
         appdata = Path.home() / "AppData" / "Roaming"
         return appdata / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / STARTUP_SHORTCUT_NAME
@@ -779,6 +856,9 @@ class TimerWidget(tk.Tk):
 
     def validate_seconds_input(self, value):
         return value == "" or (value.isdigit() and len(value) <= 2 and int(value) <= 59)
+
+    def validate_quick_minute_input(self, value):
+        return value == "" or (value.isdigit() and len(value) <= 3)
 
     def _window_handle(self):
         if not IS_WINDOWS:
@@ -850,6 +930,7 @@ class TimerWidget(tk.Tk):
             "compact": self.compact,
             "minutes": self.duration_minutes.get().strip() or "0",
             "seconds": self.duration_seconds.get().strip() or "0",
+            "quick_minutes": self.quick_minutes,
             "sound_mode": self.sound_mode.get(),
             "sound_repeat": self.sound_repeat.get(),
             "custom_sound_path": self.custom_sound_path,
