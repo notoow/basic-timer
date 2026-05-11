@@ -391,6 +391,23 @@ class TimerWidget(tk.Tk):
         )
         stop_button.pack(side="left", expand=True, fill="x", padx=3)
 
+        reset_button = tk.Button(
+            self.actions,
+            text="리셋",
+            command=self.reset_timer,
+            bg="#2b2b2b",
+            fg="#f7f0df",
+            activebackground="#3c3c3c",
+            activeforeground="#ffffff",
+            relief="flat",
+            bd=0,
+            padx=8,
+            pady=7,
+            font=("Malgun Gothic", 9),
+            cursor="hand2",
+        )
+        reset_button.pack(side="left", expand=True, fill="x", padx=3)
+
         self.controls = tk.Frame(self.shell, bg="#161616")
         self.controls.pack(fill="x", padx=12)
 
