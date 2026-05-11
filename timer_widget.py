@@ -16,6 +16,8 @@ except ImportError:  # pragma: no cover - Windows-only nicety.
 
 
 APP_DIR = Path(__file__).resolve().parent
+ASSET_DIR = APP_DIR / "assets"
+LOGO_FILE = ASSET_DIR / "notoow_logo.png"
 STATE_FILE = APP_DIR / "timer_widget_state.json"
 WIDGET_WIDTH = 360
 FULL_HEIGHT = 270
@@ -89,6 +91,8 @@ class TimerWidget(tk.Tk):
         self.initial_y = 0
         self.initial_height = FULL_HEIGHT
         self.settings_window = None
+        self.logo_source_image = None
+        self.logo_image = None
 
         self._load_state()
         self._configure_window()
@@ -175,6 +179,12 @@ class TimerWidget(tk.Tk):
         self.titlebar = tk.Frame(self.shell, bg="#161616")
         self.titlebar.pack(fill="x", padx=10, pady=(8, 0))
         self._make_draggable(self.titlebar)
+
+        self.logo_image = self._load_logo_image()
+        if self.logo_image is not None:
+            logo = tk.Label(self.titlebar, image=self.logo_image, bg="#161616")
+            logo.pack(side="left", padx=(0, 6))
+            self._make_draggable(logo)
 
         title = tk.Label(
             self.titlebar,
@@ -405,6 +415,18 @@ class TimerWidget(tk.Tk):
             font=("Segoe UI", 8),
             cursor="hand2",
         )
+
+    def _load_logo_image(self):
+        if not LOGO_FILE.exists():
+            return None
+        try:
+            self.logo_source_image = tk.PhotoImage(file=str(LOGO_FILE))
+        except tk.TclError:
+            return None
+
+        max_size = max(self.logo_source_image.width(), self.logo_source_image.height())
+        scale = max(1, math.ceil(max_size / 18))
+        return self.logo_source_image.subsample(scale, scale)
 
     def _chip_button(self, parent, text, command):
         return tk.Button(
