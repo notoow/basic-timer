@@ -7,7 +7,7 @@ import time
 import tkinter as tk
 from ctypes import byref, windll, wintypes
 from pathlib import Path
-from tkinter import filedialog, messagebox
+from tkinter import filedialog
 
 try:
     import winsound
@@ -91,6 +91,8 @@ class TimerWidget(tk.Tk):
         self.initial_y = 0
         self.initial_height = FULL_HEIGHT
         self.settings_window = None
+        self.completion_window = None
+        self.sound_after_ids = []
         self.logo_source_image = None
         self.logo_image = None
 
@@ -989,12 +991,90 @@ class TimerWidget(tk.Tk):
         self.lift()
         self.play_completion_sound()
         self.after(100, self._flash_once)
-        self.after(
-            760,
-            lambda: messagebox.showinfo("Timer Widget", "시간이 다 됐습니다.", parent=self),
-        )
+        self.after(260, self.show_completion_popup)
+
+    def show_completion_popup(self):
+        if self.completion_window is not None and self.completion_window.winfo_exists():
+            self.completion_window.lift()
+            return
+
+        popup = tk.Toplevel(self)
+        self.completion_window = popup
+        popup.title("Timer Complete")
+        popup.configure(bg="#161616")
+        popup.resizable(False, False)
+        popup.transient(self)
+        popup.attributes("-topmost", True)
+        popup.protocol("WM_DELETE_WINDOW", self.dismiss_completion_popup)
+
+        panel = tk.Frame(popup, bg="#161616", padx=16, pady=14)
+        panel.pack(fill="both", expand=True)
+
+        tk.Label(
+            panel,
+            text="시간이 다 됐습니다.",
+            bg="#161616",
+            fg="#f7f0df",
+            font=("Malgun Gothic", 11, "bold"),
+        ).pack(anchor="w")
+        tk.Label(
+            panel,
+            text=self._format_time(self._current_total_seconds()),
+            bg="#161616",
+            fg="#8bd3c7",
+            font=("Segoe UI Semibold", 24),
+        ).pack(anchor="w", pady=(4, 10))
+
+        action_row = tk.Frame(panel, bg="#161616")
+        action_row.pack(fill="x")
+        self._settings_button(action_row, "5분 더", self.snooze_five_minutes).pack(side="left")
+        self._settings_button(action_row, "다시 시작", self.restart_timer_from_popup).pack(side="left", padx=(8, 0))
+        self._settings_button(action_row, "닫기", self.dismiss_completion_popup).pack(side="right")
+
+        self._place_completion_popup(popup)
+
+    def _place_completion_popup(self, popup):
+        self.update_idletasks()
+        x, y, width, height = self._window_bounds()
+        popup.update_idletasks()
+        popup_width = max(280, popup.winfo_width())
+        popup_height = max(130, popup.winfo_height())
+        popup_x = x + max(0, (width - popup_width) // 2)
+        popup_y = y + max(0, (height - popup_height) // 2)
+        popup_x, popup_y = self._keep_window_visible(popup_x, popup_y, popup_width, popup_height)
+        popup.geometry(f"{popup_width}x{popup_height}{popup_x:+d}{popup_y:+d}")
+
+    def snooze_five_minutes(self):
+        self.dismiss_completion_popup()
+        self.set_duration(5)
+        self.start_timer()
+
+    def restart_timer_from_popup(self):
+        self.dismiss_completion_popup()
+        self.reset_timer()
+        self.start_timer()
+
+    def dismiss_completion_popup(self):
+        self.stop_completion_sound()
+        if self.completion_window is not None and self.completion_window.winfo_exists():
+            self.completion_window.destroy()
+        self.completion_window = None
+
+    def stop_completion_sound(self):
+        for after_id in self.sound_after_ids:
+            try:
+                self.after_cancel(after_id)
+            except tk.TclError:
+                pass
+        self.sound_after_ids.clear()
+        if winsound is not None:
+            try:
+                winsound.PlaySound(None, 0)
+            except RuntimeError:
+                pass
 
     def play_completion_sound(self):
+        self.stop_completion_sound()
         mode = self.sound_mode.get()
         if mode == "silent":
             return
@@ -1024,7 +1104,7 @@ class TimerWidget(tk.Tk):
             delays = tuple(index * 260 for index in range(repeat))
 
         for delay in delays:
-            self.after(delay, self._beep)
+            self.sound_after_ids.append(self.after(delay, self._beep))
 
     def _beep(self):
         if winsound is None:
