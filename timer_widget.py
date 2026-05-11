@@ -21,6 +21,8 @@ WIDGET_WIDTH = 360
 FULL_HEIGHT = 270
 COMPACT_HEIGHT = 184
 QUICK_MINUTES = (5, 10, 25, 50, 60)
+MAX_MINUTES = 999
+MAX_TOTAL_SECONDS = MAX_MINUTES * 60 + 59
 IS_WINDOWS = sys.platform.startswith("win")
 SWP_NOZORDER = 0x0004
 SWP_NOACTIVATE = 0x0010
@@ -62,6 +64,7 @@ class TimerWidget(tk.Tk):
         self.resizable(False, False)
 
         self.duration_minutes = tk.StringVar(value="25")
+        self.duration_seconds = tk.StringVar(value="0")
         self.status_text = tk.StringVar(value="준비")
         self.pin_text = tk.StringVar(value="Pin")
         self.compact_button_text = tk.StringVar(value="Mini")
@@ -116,8 +119,10 @@ class TimerWidget(tk.Tk):
         except (TypeError, ValueError):
             self.sound_repeat.set(3)
         minutes = str(self._state.get("minutes", self.duration_minutes.get()))
+        seconds = str(self._state.get("seconds", self.duration_seconds.get()))
         self.duration_minutes.set(minutes)
-        self.remaining_seconds = self._minutes_to_seconds(minutes)
+        self.duration_seconds.set(seconds)
+        self.remaining_seconds = self._current_total_seconds()
         height = COMPACT_HEIGHT if self.compact else FULL_HEIGHT
 
         x, y = self._saved_position()
@@ -284,31 +289,33 @@ class TimerWidget(tk.Tk):
             button = self._split_minute_button(quick_row, minutes)
             button.grid(row=0, column=column, sticky="ew", padx=2)
 
-        custom_row = tk.Frame(self.controls, bg="#161616")
-        custom_row.pack(fill="x", pady=(0, 8))
+        custom_row = tk.Frame(
+            self.controls,
+            bg="#202020",
+            highlightthickness=1,
+            highlightbackground="#343434",
+        )
+        custom_row.pack(fill="x", pady=(2, 8), ipady=5)
 
         minus_button = self._chip_button(custom_row, "-1", lambda: self.bump_minutes(-1))
-        minus_button.pack(side="left", padx=3)
+        minus_button.pack(side="left", padx=(6, 5))
 
         minute_validation = (self.register(self.validate_minutes_input), "%P")
-        self.minutes_entry = tk.Spinbox(
+        second_validation = (self.register(self.validate_seconds_input), "%P")
+        self.minutes_entry = tk.Entry(
             custom_row,
-            from_=0,
-            to=999,
             textvariable=self.duration_minutes,
-            width=5,
+            width=4,
             justify="center",
-            bg="#202020",
+            bg="#151515",
             fg="#f7f0df",
-            buttonbackground="#303030",
             insertbackground="#f7f0df",
             relief="flat",
             font=("Segoe UI", 10),
             validate="key",
             validatecommand=minute_validation,
-            command=self.apply_custom_minutes,
         )
-        self.minutes_entry.pack(side="left", fill="x", expand=True, padx=3)
+        self.minutes_entry.pack(side="left", fill="x", expand=True, padx=(0, 4))
         self.minutes_entry.bind("<Button-1>", self.select_minutes_text)
         self.minutes_entry.bind("<FocusIn>", self.select_minutes_text)
         self.minutes_entry.bind("<KeyRelease>", self.apply_custom_minutes_live)
@@ -316,10 +323,34 @@ class TimerWidget(tk.Tk):
         self.minutes_entry.bind("<FocusOut>", lambda _event: self.apply_custom_minutes())
 
         label = tk.Label(custom_row, text="min", bg="#161616", fg="#aaa395", font=("Segoe UI", 9))
-        label.pack(side="left", padx=(2, 6))
+        label.configure(bg="#202020")
+        label.pack(side="left", padx=(0, 6))
+
+        self.seconds_entry = tk.Entry(
+            custom_row,
+            textvariable=self.duration_seconds,
+            width=3,
+            justify="center",
+            bg="#151515",
+            fg="#f7f0df",
+            insertbackground="#f7f0df",
+            relief="flat",
+            font=("Segoe UI", 10),
+            validate="key",
+            validatecommand=second_validation,
+        )
+        self.seconds_entry.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        self.seconds_entry.bind("<Button-1>", self.select_seconds_text)
+        self.seconds_entry.bind("<FocusIn>", self.select_seconds_text)
+        self.seconds_entry.bind("<KeyRelease>", self.apply_custom_minutes_live)
+        self.seconds_entry.bind("<Return>", lambda _event: self.apply_custom_minutes())
+        self.seconds_entry.bind("<FocusOut>", lambda _event: self.apply_custom_minutes())
+
+        seconds_label = tk.Label(custom_row, text="sec", bg="#202020", fg="#aaa395", font=("Segoe UI", 9))
+        seconds_label.pack(side="left", padx=(0, 6))
 
         plus_button = self._chip_button(custom_row, "+1", lambda: self.bump_minutes(1))
-        plus_button.pack(side="left", padx=3)
+        plus_button.pack(side="left", padx=(0, 6))
 
         self.bind("<Button-3>", self.show_menu)
         self.shell.bind("<Button-3>", self.show_menu)
@@ -615,8 +646,14 @@ class TimerWidget(tk.Tk):
     def select_minutes_text(self, _event=None):
         self.after_idle(lambda: self.minutes_entry.selection_range(0, tk.END))
 
+    def select_seconds_text(self, _event=None):
+        self.after_idle(lambda: self.seconds_entry.selection_range(0, tk.END))
+
     def validate_minutes_input(self, value):
         return value == "" or (value.isdigit() and len(value) <= 3)
+
+    def validate_seconds_input(self, value):
+        return value == "" or (value.isdigit() and len(value) <= 2 and int(value) <= 59)
 
     def _window_handle(self):
         if not IS_WINDOWS:
@@ -687,6 +724,7 @@ class TimerWidget(tk.Tk):
             "always_on_top": self.always_on_top,
             "compact": self.compact,
             "minutes": self.duration_minutes.get().strip() or "0",
+            "seconds": self.duration_seconds.get().strip() or "0",
             "sound_mode": self.sound_mode.get(),
             "sound_repeat": self.sound_repeat.get(),
             "custom_sound_path": self.custom_sound_path,
@@ -696,15 +734,25 @@ class TimerWidget(tk.Tk):
         except OSError:
             pass
 
-    def _minutes_to_seconds(self, value):
+    def _entry_number(self, value, default=0):
         try:
-            minutes = max(0, min(999, int(float(str(value).strip()))))
+            text = str(value).strip()
+            if text == "":
+                return default
+            return int(text)
         except ValueError:
-            minutes = 25
-        return minutes * 60
+            return default
 
     def _current_total_seconds(self):
-        return self._minutes_to_seconds(self.duration_minutes.get())
+        minutes = max(0, min(MAX_MINUTES, self._entry_number(self.duration_minutes.get())))
+        seconds = max(0, min(59, self._entry_number(self.duration_seconds.get())))
+        return min(MAX_TOTAL_SECONDS, minutes * 60 + seconds)
+
+    def _set_input_from_seconds(self, total_seconds):
+        total_seconds = max(0, min(MAX_TOTAL_SECONDS, int(math.ceil(total_seconds))))
+        minutes, seconds = divmod(total_seconds, 60)
+        self.duration_minutes.set(str(minutes))
+        self.duration_seconds.set(str(seconds))
 
     def _format_time(self, seconds):
         seconds = max(0, int(math.ceil(seconds)))
@@ -757,27 +805,27 @@ class TimerWidget(tk.Tk):
     def set_duration(self, minutes):
         if self.running:
             self.pause_timer()
-        minutes = max(0, min(999, int(minutes)))
+        minutes = max(0, min(MAX_MINUTES, int(minutes)))
+        total_seconds = minutes * 60
         self.finished = False
-        self.duration_minutes.set(str(minutes))
-        self.remaining_seconds = minutes * 60
+        self._set_input_from_seconds(total_seconds)
+        self.remaining_seconds = total_seconds
         self.status_text.set(f"{minutes}분 설정")
         self._update_display()
 
     def add_minutes(self, minutes):
         self._sync_remaining_from_deadline()
         add_seconds = minutes * 60
-        max_seconds = 999 * 60
 
         if self.finished or self.remaining_seconds <= 0:
-            new_total = min(max_seconds, add_seconds)
+            new_total = min(MAX_TOTAL_SECONDS, add_seconds)
             self.remaining_seconds = new_total
         else:
             current_total = self._current_total_seconds()
-            new_total = min(max_seconds, current_total + add_seconds)
+            new_total = min(MAX_TOTAL_SECONDS, current_total + add_seconds)
             self.remaining_seconds = min(new_total, self.remaining_seconds + add_seconds)
 
-        self.duration_minutes.set(str(max(1, int(math.ceil(new_total / 60)))))
+        self._set_input_from_seconds(new_total)
         if self.running:
             self.deadline = time.monotonic() + self.remaining_seconds
         self.finished = False
@@ -800,7 +848,7 @@ class TimerWidget(tk.Tk):
                 new_total = max(new_remaining, current_total - subtract_seconds)
 
         self.remaining_seconds = new_remaining
-        self.duration_minutes.set(str(int(math.ceil(new_total / 60))) if new_total > 0 else "0")
+        self._set_input_from_seconds(new_total)
         self.finished = False
 
         if self.running and self.remaining_seconds > 0:
@@ -814,8 +862,9 @@ class TimerWidget(tk.Tk):
         self._update_display()
 
     def apply_custom_minutes(self):
-        value = self.duration_minutes.get().strip()
-        if value == "":
+        minute_value = self.duration_minutes.get().strip()
+        second_value = self.duration_seconds.get().strip()
+        if minute_value == "" and second_value == "":
             self.remaining_seconds = 0
             self.deadline = None
             self.finished = False
@@ -825,19 +874,25 @@ class TimerWidget(tk.Tk):
             return
 
         seconds = self._current_total_seconds()
-        minutes = seconds // 60
-        self.duration_minutes.set(str(minutes))
+        minutes, seconds_part = divmod(seconds, 60)
+        if minute_value == "":
+            self.duration_minutes.set("0")
+        if second_value == "":
+            self.duration_seconds.set("0")
         self.finished = False
         self.remaining_seconds = seconds
         if seconds <= 0:
             self.running = False
             self.deadline = None
-            self.status_text.set("0분 설정")
+            self.status_text.set("0초 설정")
         elif self.running:
             self.deadline = time.monotonic() + self.remaining_seconds
             self.status_text.set("진행 중")
         else:
-            self.status_text.set(f"{minutes}분 설정")
+            if seconds_part:
+                self.status_text.set(f"{minutes}분 {seconds_part}초 설정")
+            else:
+                self.status_text.set(f"{minutes}분 설정")
         self._update_display()
 
     def apply_custom_minutes_live(self, _event=None):
