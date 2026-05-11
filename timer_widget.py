@@ -33,8 +33,14 @@ WARNING_COLOR = "#ffad5f"
 FINISHED_COLOR = "#f08b72"
 PAUSED_COLOR = "#c7c0b4"
 IS_WINDOWS = sys.platform.startswith("win")
+GWL_EXSTYLE = -20
+WS_EX_APPWINDOW = 0x00040000
+WS_EX_TOOLWINDOW = 0x00000080
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
 SWP_NOZORDER = 0x0004
 SWP_NOACTIVATE = 0x0010
+SWP_FRAMECHANGED = 0x0020
 SM_XVIRTUALSCREEN = 76
 SM_YVIRTUALSCREEN = 77
 SM_CXVIRTUALSCREEN = 78
@@ -46,6 +52,15 @@ class RECT(wintypes.RECT):
 
 
 USER32 = windll.user32
+LONG_PTR = ctypes.c_longlong if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_long
+GET_WINDOW_LONG = getattr(USER32, "GetWindowLongPtrW", USER32.GetWindowLongW)
+SET_WINDOW_LONG = getattr(USER32, "SetWindowLongPtrW", USER32.SetWindowLongW)
+USER32.GetParent.argtypes = [wintypes.HWND]
+USER32.GetParent.restype = wintypes.HWND
+GET_WINDOW_LONG.argtypes = [wintypes.HWND, ctypes.c_int]
+GET_WINDOW_LONG.restype = LONG_PTR
+SET_WINDOW_LONG.argtypes = [wintypes.HWND, ctypes.c_int, LONG_PTR]
+SET_WINDOW_LONG.restype = LONG_PTR
 USER32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(RECT)]
 USER32.GetWindowRect.restype = wintypes.BOOL
 USER32.SetWindowPos.argtypes = [
@@ -110,6 +125,7 @@ class TimerWidget(tk.Tk):
         self.autosave_after_id = None
         self.progress_after_id = None
         self.initial_bounds_after_id = None
+        self.taskbar_after_id = None
         self.input_apply_after_id = None
         self.minutes_select_after_id = None
         self.seconds_select_after_id = None
@@ -129,6 +145,7 @@ class TimerWidget(tk.Tk):
         self._build_context_menu()
         self._apply_pin()
         self._apply_alpha()
+        self._schedule_taskbar_presence()
         self._update_display()
         self._resume_restored_timer()
 
@@ -1497,6 +1514,35 @@ class TimerWidget(tk.Tk):
     def _apply_alpha(self):
         self.attributes("-alpha", self.alpha)
 
+    def _schedule_taskbar_presence(self):
+        if IS_WINDOWS and self.taskbar_after_id is None:
+            self.taskbar_after_id = self.after(120, self._apply_taskbar_presence)
+
+    def _apply_taskbar_presence(self):
+        self.taskbar_after_id = None
+        if not IS_WINDOWS:
+            return
+        try:
+            self.update_idletasks()
+            hwnd = wintypes.HWND(self.winfo_id())
+            target_hwnd = USER32.GetParent(hwnd) or hwnd
+            style = int(GET_WINDOW_LONG(target_hwnd, GWL_EXSTYLE))
+            new_style = (style | WS_EX_APPWINDOW) & ~WS_EX_TOOLWINDOW
+            if new_style == style:
+                return
+            SET_WINDOW_LONG(target_hwnd, GWL_EXSTYLE, LONG_PTR(new_style))
+            USER32.SetWindowPos(
+                target_hwnd,
+                wintypes.HWND(0),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            )
+        except (tk.TclError, OSError, AttributeError, ValueError):
+            pass
+
     def toggle_compact(self):
         self.compact = not self.compact
         self.compact_menu_var.set(self.compact)
@@ -1565,6 +1611,7 @@ class TimerWidget(tk.Tk):
             "autosave_after_id",
             "progress_after_id",
             "initial_bounds_after_id",
+            "taskbar_after_id",
             "input_apply_after_id",
             "minutes_select_after_id",
             "seconds_select_after_id",
