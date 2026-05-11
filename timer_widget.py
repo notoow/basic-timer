@@ -340,7 +340,7 @@ class TimerWidget(tk.Tk):
         self.actions = tk.Frame(self.shell, bg="#161616")
         self.actions.pack(fill="x", padx=12, pady=(0, 8))
 
-        start_button = tk.Button(
+        self.start_button = tk.Button(
             self.actions,
             text="시작",
             command=self.start_timer,
@@ -348,6 +348,7 @@ class TimerWidget(tk.Tk):
             fg="#171717",
             activebackground="#ffad5f",
             activeforeground="#171717",
+            disabledforeground="#6e695f",
             relief="flat",
             bd=0,
             padx=8,
@@ -355,9 +356,9 @@ class TimerWidget(tk.Tk):
             font=("Malgun Gothic", 9, "bold"),
             cursor="hand2",
         )
-        start_button.pack(side="left", expand=True, fill="x", padx=3)
+        self.start_button.pack(side="left", expand=True, fill="x", padx=3)
 
-        pause_button = tk.Button(
+        self.pause_button = tk.Button(
             self.actions,
             text="일시정지",
             command=self.pause_timer,
@@ -365,6 +366,7 @@ class TimerWidget(tk.Tk):
             fg="#f7f0df",
             activebackground="#3c3c3c",
             activeforeground="#ffffff",
+            disabledforeground="#6e695f",
             relief="flat",
             bd=0,
             padx=8,
@@ -372,9 +374,9 @@ class TimerWidget(tk.Tk):
             font=("Malgun Gothic", 9),
             cursor="hand2",
         )
-        pause_button.pack(side="left", expand=True, fill="x", padx=3)
+        self.pause_button.pack(side="left", expand=True, fill="x", padx=3)
 
-        stop_button = tk.Button(
+        self.stop_button = tk.Button(
             self.actions,
             text="정지",
             command=self.stop_timer,
@@ -382,6 +384,7 @@ class TimerWidget(tk.Tk):
             fg="#f7f0df",
             activebackground="#3c3c3c",
             activeforeground="#ffffff",
+            disabledforeground="#6e695f",
             relief="flat",
             bd=0,
             padx=8,
@@ -389,9 +392,9 @@ class TimerWidget(tk.Tk):
             font=("Malgun Gothic", 9),
             cursor="hand2",
         )
-        stop_button.pack(side="left", expand=True, fill="x", padx=3)
+        self.stop_button.pack(side="left", expand=True, fill="x", padx=3)
 
-        reset_button = tk.Button(
+        self.reset_button = tk.Button(
             self.actions,
             text="리셋",
             command=self.reset_timer,
@@ -399,6 +402,7 @@ class TimerWidget(tk.Tk):
             fg="#f7f0df",
             activebackground="#3c3c3c",
             activeforeground="#ffffff",
+            disabledforeground="#6e695f",
             relief="flat",
             bd=0,
             padx=8,
@@ -406,7 +410,7 @@ class TimerWidget(tk.Tk):
             font=("Malgun Gothic", 9),
             cursor="hand2",
         )
-        reset_button.pack(side="left", expand=True, fill="x", padx=3)
+        self.reset_button.pack(side="left", expand=True, fill="x", padx=3)
 
         self.controls = tk.Frame(self.shell, bg="#161616")
         self.controls.pack(fill="x", padx=12)
@@ -1193,8 +1197,30 @@ class TimerWidget(tk.Tk):
         self.time_text.set(formatted_time)
         self.pin_text.set("Top" if self.always_on_top else "Pin")
         self._apply_status_colors()
+        self._update_action_buttons()
         self._update_window_title(formatted_time)
         self._draw_progress()
+
+    def _set_button_enabled(self, button, enabled, bg):
+        state = tk.NORMAL if enabled else tk.DISABLED
+        cursor = "hand2" if enabled else "arrow"
+        button.configure(state=state, cursor=cursor, bg=bg if enabled else "#202020")
+
+    def _update_action_buttons(self):
+        if not hasattr(self, "start_button"):
+            return
+
+        configured_total = self._current_total_seconds()
+        remaining_display = max(0, int(math.ceil(self.remaining_seconds)))
+        can_start = not self.running and (remaining_display > 0 or configured_total > 0)
+        can_pause = self.running
+        can_stop = self.running or self.finished or remaining_display > 0
+        can_reset = self.running or self.finished or remaining_display != configured_total
+
+        self._set_button_enabled(self.start_button, can_start, "#f28c38")
+        self._set_button_enabled(self.pause_button, can_pause, "#2b2b2b")
+        self._set_button_enabled(self.stop_button, can_stop, "#2b2b2b")
+        self._set_button_enabled(self.reset_button, can_reset, "#2b2b2b")
 
     def _current_accent_color(self):
         if self.finished:
