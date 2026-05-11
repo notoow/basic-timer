@@ -95,11 +95,13 @@ class TimerWidget(tk.Tk):
         self.sound_after_ids = []
         self.logo_source_image = None
         self.logo_image = None
+        self.app_icon_image = None
 
         self._load_state()
         self._configure_window()
         self.pin_menu_var = tk.BooleanVar(value=self.always_on_top)
         self.compact_menu_var = tk.BooleanVar(value=self.compact)
+        self._apply_app_icon()
         self._build_ui()
         self._build_context_menu()
         self._apply_pin()
@@ -470,6 +472,15 @@ class TimerWidget(tk.Tk):
         max_size = max(self.logo_source_image.width(), self.logo_source_image.height())
         scale = max(1, math.ceil(max_size / 18))
         return self.logo_source_image.subsample(scale, scale)
+
+    def _apply_app_icon(self):
+        if not LOGO_FILE.exists():
+            return
+        try:
+            self.app_icon_image = tk.PhotoImage(file=str(LOGO_FILE))
+            self.iconphoto(True, self.app_icon_image)
+        except tk.TclError:
+            self.app_icon_image = None
 
     def _chip_button(self, parent, text, command):
         return tk.Button(
