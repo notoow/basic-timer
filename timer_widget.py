@@ -103,6 +103,7 @@ class TimerWidget(tk.Tk):
         self.settings_window = None
         self.completion_window = None
         self.sound_after_ids = []
+        self.autosave_after_id = None
         self.logo_source_image = None
         self.logo_image = None
         self.app_icon_image = None
@@ -844,6 +845,7 @@ class TimerWidget(tk.Tk):
     def _make_draggable(self, widget):
         widget.bind("<ButtonPress-1>", self.start_drag)
         widget.bind("<B1-Motion>", self.drag)
+        widget.bind("<ButtonRelease-1>", self.finish_drag)
 
     def select_minutes_text(self, _event=None):
         self.after_idle(lambda: self.minutes_entry.selection_range(0, tk.END))
@@ -939,6 +941,18 @@ class TimerWidget(tk.Tk):
             STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
         except OSError:
             pass
+
+    def schedule_state_save(self, delay=400):
+        if self.autosave_after_id is not None:
+            try:
+                self.after_cancel(self.autosave_after_id)
+            except tk.TclError:
+                pass
+        self.autosave_after_id = self.after(delay, self._run_scheduled_state_save)
+
+    def _run_scheduled_state_save(self):
+        self.autosave_after_id = None
+        self._save_state()
 
     def _entry_number(self, value, default=0):
         try:
@@ -1055,6 +1069,7 @@ class TimerWidget(tk.Tk):
         self.remaining_seconds = total_seconds
         self.status_text.set(f"{minutes}분 설정")
         self._update_display()
+        self.schedule_state_save()
 
     def add_minutes(self, minutes):
         self._sync_remaining_from_deadline()
@@ -1074,6 +1089,7 @@ class TimerWidget(tk.Tk):
         self.finished = False
         self.status_text.set(f"+{minutes}분 추가")
         self._update_display()
+        self.schedule_state_save()
 
     def subtract_minutes(self, minutes):
         self._sync_remaining_from_deadline()
@@ -1103,6 +1119,7 @@ class TimerWidget(tk.Tk):
             self.status_text.set(f"-{minutes}분")
 
         self._update_display()
+        self.schedule_state_save()
 
     def apply_custom_minutes(self):
         minute_value = self.duration_minutes.get().strip()
@@ -1114,6 +1131,7 @@ class TimerWidget(tk.Tk):
             self.running = False
             self.status_text.set("입력 대기")
             self._update_display()
+            self.schedule_state_save()
             return
 
         seconds = self._current_total_seconds()
@@ -1137,6 +1155,7 @@ class TimerWidget(tk.Tk):
             else:
                 self.status_text.set(f"{minutes}분 설정")
         self._update_display()
+        self.schedule_state_save()
 
     def apply_custom_minutes_live(self, _event=None):
         self.after_idle(self.apply_custom_minutes)
@@ -1168,6 +1187,7 @@ class TimerWidget(tk.Tk):
         self.deadline = time.monotonic() + self.remaining_seconds
         self.status_text.set("진행 중")
         self._update_display()
+        self.schedule_state_save()
         self._tick()
 
     def pause_timer(self):
@@ -1179,6 +1199,7 @@ class TimerWidget(tk.Tk):
         self.deadline = None
         self.status_text.set("일시정지")
         self._update_display()
+        self.schedule_state_save()
 
     def stop_timer(self):
         self.running = False
@@ -1187,6 +1208,7 @@ class TimerWidget(tk.Tk):
         self.remaining_seconds = 0
         self.status_text.set("정지")
         self._update_display()
+        self.schedule_state_save()
 
     def reset_timer(self):
         self.running = False
@@ -1195,6 +1217,7 @@ class TimerWidget(tk.Tk):
         self.remaining_seconds = self._current_total_seconds()
         self.status_text.set("준비")
         self._update_display()
+        self.schedule_state_save()
 
     def finish_timer(self):
         self.running = False
@@ -1203,6 +1226,7 @@ class TimerWidget(tk.Tk):
         self.remaining_seconds = 0
         self.status_text.set("시간 끝")
         self._update_display()
+        self.schedule_state_save()
         self._alert()
 
     def _alert(self):
@@ -1352,6 +1376,7 @@ class TimerWidget(tk.Tk):
         self.pin_menu_var.set(self.always_on_top)
         self._apply_pin()
         self._update_display()
+        self.schedule_state_save()
 
     def _apply_pin(self):
         self.attributes("-topmost", self.always_on_top)
@@ -1359,6 +1384,7 @@ class TimerWidget(tk.Tk):
     def set_opacity(self, value):
         self.alpha = max(0.35, min(1.0, float(value)))
         self._apply_alpha()
+        self.schedule_state_save()
 
     def _apply_alpha(self):
         self.attributes("-alpha", self.alpha)
@@ -1367,6 +1393,7 @@ class TimerWidget(tk.Tk):
         self.compact = not self.compact
         self.compact_menu_var.set(self.compact)
         self._sync_compact_state()
+        self.schedule_state_save()
 
     def _sync_compact_state(self):
         if not hasattr(self, "controls"):
@@ -1394,6 +1421,9 @@ class TimerWidget(tk.Tk):
         y = self.drag_start_window_y + pointer_y - self.drag_start_pointer_y
         self._set_window_bounds(x, y, width, height)
 
+    def finish_drag(self, _event=None):
+        self.schedule_state_save()
+
     def show_menu(self, event):
         try:
             self.menu.tk_popup(event.x_root, event.y_root)
@@ -1401,6 +1431,12 @@ class TimerWidget(tk.Tk):
             self.menu.grab_release()
 
     def close(self):
+        if self.autosave_after_id is not None:
+            try:
+                self.after_cancel(self.autosave_after_id)
+            except tk.TclError:
+                pass
+            self.autosave_after_id = None
         self._save_state()
         self.destroy()
 

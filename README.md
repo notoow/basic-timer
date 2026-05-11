@@ -33,4 +33,4 @@ python .\timer_widget.py
 - 단축키: `Space` 시작/일시정지, `S` 정지, `R` 리셋, `Esc` 종료.
 - 숫자 입력칸, 설정창, 완료 팝업에 포커스가 있을 때는 메인 타이머 단축키가 실행되지 않습니다.
 
-종료할 때 위치, 투명도, 시간 설정이 `timer_widget_state.json`에 저장됩니다.
+위치, 투명도, 시간 설정은 변경 후 자동 저장되며 `timer_widget_state.json`에 기록됩니다.
