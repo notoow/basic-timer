@@ -27,6 +27,11 @@ COMPACT_HEIGHT = 184
 QUICK_MINUTES = (5, 10, 25, 50, 60)
 MAX_MINUTES = 999
 MAX_TOTAL_SECONDS = MAX_MINUTES * 60 + 59
+READY_COLOR = "#f7f0df"
+RUNNING_COLOR = "#8bd3c7"
+WARNING_COLOR = "#ffad5f"
+FINISHED_COLOR = "#f08b72"
+PAUSED_COLOR = "#c7c0b4"
 IS_WINDOWS = sys.platform.startswith("win")
 SWP_NOZORDER = 0x0004
 SWP_NOACTIVATE = 0x0010
@@ -226,7 +231,7 @@ class TimerWidget(tk.Tk):
             self.shell,
             textvariable=self.time_text,
             bg="#161616",
-            fg="#f7f0df",
+            fg=READY_COLOR,
             font=("Segoe UI Semibold", 38),
         )
         self.time_label.pack(fill="x", padx=14, pady=(8, 0))
@@ -236,7 +241,7 @@ class TimerWidget(tk.Tk):
             self.shell,
             textvariable=self.status_text,
             bg="#161616",
-            fg="#8bd3c7",
+            fg=RUNNING_COLOR,
             font=("Segoe UI", 9),
         )
         self.status_label.pack(fill="x", padx=14)
@@ -897,15 +902,41 @@ class TimerWidget(tk.Tk):
         fill_width = int(width * self._progress_ratio())
         self.progress.create_rectangle(0, 0, width, height, fill="#2b2b2b", width=0)
         if fill_width > 0:
-            color = "#d66b40" if self.finished else "#4bb39f"
+            color = self._current_accent_color()
             self.progress.create_rectangle(0, 0, fill_width, height, fill=color, width=0)
 
     def _update_display(self):
         formatted_time = self._format_time(self.remaining_seconds)
         self.time_text.set(formatted_time)
         self.pin_text.set("Top" if self.always_on_top else "Pin")
+        self._apply_status_colors()
         self._update_window_title(formatted_time)
         self._draw_progress()
+
+    def _current_accent_color(self):
+        if self.finished:
+            return FINISHED_COLOR
+        if self.running and self.remaining_seconds <= 10:
+            return WARNING_COLOR
+        if self.running:
+            return RUNNING_COLOR
+        if self.remaining_seconds <= 0:
+            return PAUSED_COLOR
+        return PAUSED_COLOR
+
+    def _apply_status_colors(self):
+        accent = self._current_accent_color()
+        if self.running:
+            time_color = accent
+            status_color = accent
+        elif self.finished:
+            time_color = FINISHED_COLOR
+            status_color = FINISHED_COLOR
+        else:
+            time_color = READY_COLOR if self.remaining_seconds > 0 else PAUSED_COLOR
+            status_color = accent
+        self.time_label.configure(fg=time_color)
+        self.status_label.configure(fg=status_color)
 
     def _update_window_title(self, formatted_time=None):
         if formatted_time is None:
