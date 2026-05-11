@@ -19,6 +19,7 @@ APP_DIR = Path(__file__).resolve().parent
 ASSET_DIR = APP_DIR / "assets"
 LOGO_FILE = ASSET_DIR / "notoow_logo.png"
 STATE_FILE = APP_DIR / "timer_widget_state.json"
+STARTUP_SHORTCUT_NAME = "Basic Timer.cmd"
 WIDGET_WIDTH = 360
 FULL_HEIGHT = 270
 COMPACT_HEIGHT = 184
@@ -72,6 +73,7 @@ class TimerWidget(tk.Tk):
         self.compact_button_text = tk.StringVar(value="Mini")
         self.sound_mode = tk.StringVar(value="default")
         self.sound_repeat = tk.IntVar(value=3)
+        self.start_with_windows = tk.BooleanVar(value=False)
         self.custom_sound_path = ""
         self.custom_sound_label_text = tk.StringVar(value="선택된 WAV 없음")
         self.time_text = tk.StringVar(value="25:00")
@@ -99,6 +101,7 @@ class TimerWidget(tk.Tk):
 
         self._load_state()
         self._configure_window()
+        self.start_with_windows.set(self.is_startup_enabled())
         self.pin_menu_var = tk.BooleanVar(value=self.always_on_top)
         self.compact_menu_var = tk.BooleanVar(value=self.compact)
         self._apply_app_icon()
@@ -642,6 +645,20 @@ class TimerWidget(tk.Tk):
         opacity.set(int(self.alpha * 100))
         opacity.pack(fill="x")
 
+        startup_check = tk.Checkbutton(
+            panel,
+            text="Windows 시작 시 실행",
+            variable=self.start_with_windows,
+            command=self.toggle_startup,
+            bg="#161616",
+            fg="#e9dfcc",
+            activebackground="#161616",
+            activeforeground="#ffffff",
+            selectcolor="#242424",
+            font=("Malgun Gothic", 9),
+        )
+        startup_check.pack(anchor="w", pady=(10, 0))
+
         action_row = tk.Frame(panel, bg="#161616")
         action_row.pack(fill="x", pady=(12, 0))
         self._settings_button(action_row, "테스트", self.play_completion_sound).pack(side="left")
@@ -702,6 +719,31 @@ class TimerWidget(tk.Tk):
         self.custom_sound_path = path
         self.custom_sound_label_text.set(Path(path).name)
         self.sound_mode.set("custom")
+        self._save_state()
+
+    def startup_shortcut_path(self):
+        appdata = Path.home() / "AppData" / "Roaming"
+        return appdata / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / STARTUP_SHORTCUT_NAME
+
+    def is_startup_enabled(self):
+        return self.startup_shortcut_path().exists()
+
+    def toggle_startup(self):
+        shortcut_path = self.startup_shortcut_path()
+        if self.start_with_windows.get():
+            shortcut_path.parent.mkdir(parents=True, exist_ok=True)
+            launcher = APP_DIR / "run_timer_widget.bat"
+            shortcut_path.write_text(
+                f'@echo off\r\nstart "" "{launcher}"\r\n',
+                encoding="utf-8",
+            )
+            self.status_text.set("시작 시 실행 켬")
+        else:
+            try:
+                shortcut_path.unlink()
+            except FileNotFoundError:
+                pass
+            self.status_text.set("시작 시 실행 끔")
         self._save_state()
 
     def close_settings(self):
