@@ -1,0 +1,4 @@
+__pycache__/
+*.py[cod]
+timer_widget_state.json
+timer_widget_error.log
