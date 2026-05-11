@@ -20,6 +20,7 @@ ASSET_DIR = APP_DIR / "assets"
 LOGO_FILE = ASSET_DIR / "notoow_logo.png"
 STATE_FILE = APP_DIR / "timer_widget_state.json"
 STARTUP_SHORTCUT_NAME = "Basic Timer.cmd"
+APP_TITLE = "Basic Timer"
 WIDGET_WIDTH = 360
 FULL_HEIGHT = 270
 COMPACT_HEIGHT = 184
@@ -61,7 +62,7 @@ USER32.GetSystemMetrics.restype = ctypes.c_int
 class TimerWidget(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Timer Widget")
+        self.title(APP_TITLE)
         self.configure(bg="#161616")
         self.overrideredirect(True)
         self.resizable(False, False)
@@ -900,9 +901,20 @@ class TimerWidget(tk.Tk):
             self.progress.create_rectangle(0, 0, fill_width, height, fill=color, width=0)
 
     def _update_display(self):
-        self.time_text.set(self._format_time(self.remaining_seconds))
+        formatted_time = self._format_time(self.remaining_seconds)
+        self.time_text.set(formatted_time)
         self.pin_text.set("Top" if self.always_on_top else "Pin")
+        self._update_window_title(formatted_time)
         self._draw_progress()
+
+    def _update_window_title(self, formatted_time=None):
+        if formatted_time is None:
+            formatted_time = self._format_time(self.remaining_seconds)
+        status = self.status_text.get().strip()
+        if status:
+            self.title(f"{APP_TITLE} - {formatted_time} - {status}")
+        else:
+            self.title(f"{APP_TITLE} - {formatted_time}")
 
     def _tick(self):
         if not self.running or self.deadline is None:
