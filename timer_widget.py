@@ -106,10 +106,12 @@ class TimerWidget(tk.Tk):
         self._apply_alpha()
         self._update_display()
 
-        self.bind("<space>", lambda _event: self.toggle_timer())
-        self.bind("<r>", lambda _event: self.reset_timer())
-        self.bind("<s>", lambda _event: self.stop_timer())
-        self.bind("<Escape>", lambda _event: self.close())
+        self.bind("<space>", self.shortcut_toggle_timer)
+        self.bind("<r>", self.shortcut_reset_timer)
+        self.bind("<R>", self.shortcut_reset_timer)
+        self.bind("<s>", self.shortcut_stop_timer)
+        self.bind("<S>", self.shortcut_stop_timer)
+        self.bind("<Escape>", self.shortcut_escape)
         self.protocol("WM_DELETE_WINDOW", self.close)
 
     def _configure_window(self):
@@ -400,6 +402,45 @@ class TimerWidget(tk.Tk):
         self.menu.add_separator()
         self.menu.add_command(label="Exit", command=self.close)
 
+    def _widget_exists(self, widget):
+        return widget is not None and widget.winfo_exists()
+
+    def _focus_is_text_input(self):
+        focused = self.focus_get()
+        if focused is None:
+            return False
+        return focused.winfo_class() in {"Entry", "TEntry", "Text", "Spinbox", "TSpinbox"}
+
+    def _modal_window_open(self):
+        return self._widget_exists(self.settings_window) or self._widget_exists(self.completion_window)
+
+    def _can_use_main_shortcut(self):
+        return not self._focus_is_text_input() and not self._modal_window_open()
+
+    def shortcut_toggle_timer(self, _event=None):
+        if self._can_use_main_shortcut():
+            self.toggle_timer()
+        return "break"
+
+    def shortcut_reset_timer(self, _event=None):
+        if self._can_use_main_shortcut():
+            self.reset_timer()
+        return "break"
+
+    def shortcut_stop_timer(self, _event=None):
+        if self._can_use_main_shortcut():
+            self.stop_timer()
+        return "break"
+
+    def shortcut_escape(self, _event=None):
+        if self._widget_exists(self.completion_window):
+            self.dismiss_completion_popup()
+        elif self._widget_exists(self.settings_window):
+            self.close_settings()
+        elif not self._focus_is_text_input():
+            self.close()
+        return "break"
+
     def _small_button(self, parent, text=None, command=None, bg="#252525", fg="#d8d1c4", textvariable=None):
         return tk.Button(
             parent,
@@ -521,6 +562,7 @@ class TimerWidget(tk.Tk):
         window.transient(self)
         window.attributes("-topmost", self.always_on_top)
         window.protocol("WM_DELETE_WINDOW", self.close_settings)
+        window.bind("<Escape>", lambda _event: self.close_settings())
 
         panel = tk.Frame(window, bg="#161616", padx=14, pady=12)
         panel.pack(fill="both", expand=True)
@@ -1006,6 +1048,7 @@ class TimerWidget(tk.Tk):
         popup.transient(self)
         popup.attributes("-topmost", True)
         popup.protocol("WM_DELETE_WINDOW", self.dismiss_completion_popup)
+        popup.bind("<Escape>", lambda _event: self.dismiss_completion_popup())
 
         panel = tk.Frame(popup, bg="#161616", padx=16, pady=14)
         panel.pack(fill="both", expand=True)
