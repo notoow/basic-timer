@@ -103,10 +103,21 @@ class TimerWidget(tk.Tk):
         self.settings_window = None
         self.completion_window = None
         self.sound_after_ids = []
+        self.tick_after_id = None
+        self.alert_after_id = None
+        self.popup_after_id = None
+        self.flash_after_id = None
         self.autosave_after_id = None
+        self.progress_after_id = None
+        self.initial_bounds_after_id = None
+        self.input_apply_after_id = None
+        self.minutes_select_after_id = None
+        self.seconds_select_after_id = None
         self.logo_source_image = None
         self.logo_image = None
         self.app_icon_image = None
+        self.restore_running_after_init = False
+        self.restore_completion_after_init = False
 
         self._load_state()
         self._configure_window()
@@ -119,6 +130,7 @@ class TimerWidget(tk.Tk):
         self._apply_pin()
         self._apply_alpha()
         self._update_display()
+        self._resume_restored_timer()
 
         self.bind("<space>", self.shortcut_toggle_timer)
         self.bind("<r>", self.shortcut_reset_timer)
@@ -146,6 +158,7 @@ class TimerWidget(tk.Tk):
         self.duration_minutes.set(minutes)
         self.duration_seconds.set(seconds)
         self.remaining_seconds = self._current_total_seconds()
+        self._restore_timer_state()
         height = COMPACT_HEIGHT if self.compact else FULL_HEIGHT
 
         x, y = self._saved_position()
@@ -154,6 +167,48 @@ class TimerWidget(tk.Tk):
         self.initial_y = y
         self.initial_height = height
         self.geometry(f"{WIDGET_WIDTH}x{height}")
+
+    def _restore_timer_state(self):
+        saved_remaining = self._state.get("remaining_seconds")
+        if saved_remaining is not None:
+            try:
+                self.remaining_seconds = max(0, min(MAX_TOTAL_SECONDS, float(saved_remaining)))
+            except (TypeError, ValueError):
+                pass
+
+        if bool(self._state.get("timer_running", False)):
+            deadline_wall_time = self._state.get("deadline_wall_time")
+            try:
+                remaining = float(deadline_wall_time) - time.time()
+            except (TypeError, ValueError):
+                remaining = self.remaining_seconds
+
+            if remaining > 0:
+                self.remaining_seconds = min(MAX_TOTAL_SECONDS, remaining)
+                self.deadline = time.monotonic() + self.remaining_seconds
+                self.running = True
+                self.finished = False
+                self.status_text.set("진행 중")
+                self.restore_running_after_init = True
+            else:
+                self.remaining_seconds = 0
+                self.deadline = None
+                self.running = False
+                self.finished = True
+                self.status_text.set("시간 끝")
+                self.restore_completion_after_init = True
+        elif bool(self._state.get("timer_finished", False)):
+            self.remaining_seconds = 0
+            self.deadline = None
+            self.running = False
+            self.finished = True
+            self.status_text.set("시간 끝")
+
+    def _resume_restored_timer(self):
+        if self.restore_running_after_init:
+            self._schedule_tick()
+        elif self.restore_completion_after_init:
+            self.alert_after_id = self.after(300, self._alert)
 
     def _saved_position(self):
         if "x" in self._state and "y" in self._state:
@@ -389,7 +444,11 @@ class TimerWidget(tk.Tk):
         self._make_draggable(self.progress)
 
         self._sync_compact_state()
-        self.after_idle(lambda: self._set_window_bounds(self.initial_x, self.initial_y, WIDGET_WIDTH, self.initial_height))
+        self.initial_bounds_after_id = self.after_idle(self._apply_initial_window_bounds)
+
+    def _apply_initial_window_bounds(self):
+        self.initial_bounds_after_id = None
+        self._set_window_bounds(self.initial_x, self.initial_y, WIDGET_WIDTH, self.initial_height)
 
     def _build_context_menu(self):
         self.menu = tk.Menu(self, tearoff=0, bg="#202020", fg="#f7f0df", activebackground="#3a3a3a")
@@ -848,10 +907,22 @@ class TimerWidget(tk.Tk):
         widget.bind("<ButtonRelease-1>", self.finish_drag)
 
     def select_minutes_text(self, _event=None):
-        self.after_idle(lambda: self.minutes_entry.selection_range(0, tk.END))
+        if self.minutes_select_after_id is None:
+            self.minutes_select_after_id = self.after_idle(self._select_minutes_text_after_idle)
 
     def select_seconds_text(self, _event=None):
-        self.after_idle(lambda: self.seconds_entry.selection_range(0, tk.END))
+        if self.seconds_select_after_id is None:
+            self.seconds_select_after_id = self.after_idle(self._select_seconds_text_after_idle)
+
+    def _select_minutes_text_after_idle(self):
+        self.minutes_select_after_id = None
+        if hasattr(self, "minutes_entry") and self.minutes_entry.winfo_exists():
+            self.minutes_entry.selection_range(0, tk.END)
+
+    def _select_seconds_text_after_idle(self):
+        self.seconds_select_after_id = None
+        if hasattr(self, "seconds_entry") and self.seconds_entry.winfo_exists():
+            self.seconds_entry.selection_range(0, tk.END)
 
     def validate_minutes_input(self, value):
         return value == "" or (value.isdigit() and len(value) <= 3)
@@ -923,6 +994,10 @@ class TimerWidget(tk.Tk):
 
     def _save_state(self):
         x, y, width, height = self._window_bounds()
+        remaining_seconds = self.remaining_seconds
+        if self.running and self.deadline is not None:
+            remaining_seconds = max(0, self.deadline - time.monotonic())
+        deadline_wall_time = time.time() + remaining_seconds if self.running else None
         state = {
             "geometry": f"{width}x{height}{x:+d}{y:+d}",
             "x": x,
@@ -936,6 +1011,10 @@ class TimerWidget(tk.Tk):
             "sound_mode": self.sound_mode.get(),
             "sound_repeat": self.sound_repeat.get(),
             "custom_sound_path": self.custom_sound_path,
+            "timer_running": self.running,
+            "timer_finished": self.finished,
+            "remaining_seconds": remaining_seconds,
+            "deadline_wall_time": deadline_wall_time,
         }
         try:
             STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
@@ -992,13 +1071,19 @@ class TimerWidget(tk.Tk):
         width = self.progress.winfo_width()
         height = self.progress.winfo_height()
         if width <= 1:
-            self.after(50, self._draw_progress)
+            if self.progress_after_id is None:
+                self.progress_after_id = self.after(50, self._retry_draw_progress)
             return
         fill_width = int(width * self._progress_ratio())
         self.progress.create_rectangle(0, 0, width, height, fill="#2b2b2b", width=0)
         if fill_width > 0:
             color = self._current_accent_color()
             self.progress.create_rectangle(0, 0, fill_width, height, fill=color, width=0)
+
+    def _retry_draw_progress(self):
+        self.progress_after_id = None
+        if self.winfo_exists() and hasattr(self, "progress") and self.progress.winfo_exists():
+            self._draw_progress()
 
     def _update_display(self):
         formatted_time = self._format_time(self.remaining_seconds)
@@ -1042,7 +1127,12 @@ class TimerWidget(tk.Tk):
         else:
             self.title(f"{APP_TITLE} - {formatted_time}")
 
+    def _schedule_tick(self):
+        self._cancel_after_id("tick_after_id")
+        self.tick_after_id = self.after(180, self._tick)
+
     def _tick(self):
+        self.tick_after_id = None
         if not self.running or self.deadline is None:
             return
 
@@ -1053,7 +1143,7 @@ class TimerWidget(tk.Tk):
             self.finish_timer()
             return
 
-        self.after(180, self._tick)
+        self._schedule_tick()
 
     def _sync_remaining_from_deadline(self):
         if self.running:
@@ -1158,7 +1248,12 @@ class TimerWidget(tk.Tk):
         self.schedule_state_save()
 
     def apply_custom_minutes_live(self, _event=None):
-        self.after_idle(self.apply_custom_minutes)
+        if self.input_apply_after_id is None:
+            self.input_apply_after_id = self.after_idle(self._apply_custom_minutes_after_idle)
+
+    def _apply_custom_minutes_after_idle(self):
+        self.input_apply_after_id = None
+        self.apply_custom_minutes()
 
     def bump_minutes(self, delta):
         if delta > 0:
@@ -1175,6 +1270,7 @@ class TimerWidget(tk.Tk):
     def start_timer(self):
         if self.running:
             return
+        self._cancel_alert_callbacks(close_popup=True)
         self.apply_custom_minutes() if self.remaining_seconds <= 0 else None
         if self.remaining_seconds <= 0:
             self.remaining_seconds = self._current_total_seconds()
@@ -1197,6 +1293,7 @@ class TimerWidget(tk.Tk):
             self.remaining_seconds = max(0, self.deadline - time.monotonic())
         self.running = False
         self.deadline = None
+        self._cancel_after_id("tick_after_id")
         self.status_text.set("일시정지")
         self._update_display()
         self.schedule_state_save()
@@ -1205,6 +1302,8 @@ class TimerWidget(tk.Tk):
         self.running = False
         self.finished = False
         self.deadline = None
+        self._cancel_after_id("tick_after_id")
+        self._cancel_alert_callbacks(close_popup=True)
         self.remaining_seconds = 0
         self.status_text.set("정지")
         self._update_display()
@@ -1214,6 +1313,8 @@ class TimerWidget(tk.Tk):
         self.running = False
         self.finished = False
         self.deadline = None
+        self._cancel_after_id("tick_after_id")
+        self._cancel_alert_callbacks(close_popup=True)
         self.remaining_seconds = self._current_total_seconds()
         self.status_text.set("준비")
         self._update_display()
@@ -1223,6 +1324,7 @@ class TimerWidget(tk.Tk):
         self.running = False
         self.finished = True
         self.deadline = None
+        self._cancel_after_id("tick_after_id")
         self.remaining_seconds = 0
         self.status_text.set("시간 끝")
         self._update_display()
@@ -1230,11 +1332,16 @@ class TimerWidget(tk.Tk):
         self._alert()
 
     def _alert(self):
+        self.alert_after_id = None
         self.attributes("-topmost", True)
         self.lift()
         self.play_completion_sound()
-        self.after(100, self._flash_once)
-        self.after(260, self.show_completion_popup)
+        self.flash_after_id = self.after(100, self._flash_once)
+        self.popup_after_id = self.after(260, self._show_completion_popup_after_delay)
+
+    def _show_completion_popup_after_delay(self):
+        self.popup_after_id = None
+        self.show_completion_popup()
 
     def show_completion_popup(self):
         if self.completion_window is not None and self.completion_window.winfo_exists():
@@ -1360,6 +1467,7 @@ class TimerWidget(tk.Tk):
             self.bell()
 
     def _flash_once(self, step=0):
+        self.flash_after_id = None
         colors = ("#47251c", "#161616", "#47251c", "#161616")
         if step >= len(colors):
             return
@@ -1369,7 +1477,7 @@ class TimerWidget(tk.Tk):
         self.status_label.configure(bg=colors[step])
         self.actions.configure(bg=colors[step])
         self.controls.configure(bg=colors[step])
-        self.after(170, lambda: self._flash_once(step + 1))
+        self.flash_after_id = self.after(170, self._flash_once, step + 1)
 
     def toggle_pin(self):
         self.always_on_top = not self.always_on_top
@@ -1430,15 +1538,48 @@ class TimerWidget(tk.Tk):
         finally:
             self.menu.grab_release()
 
-    def close(self):
-        if self.autosave_after_id is not None:
+    def _cancel_after_id(self, attribute_name):
+        after_id = getattr(self, attribute_name, None)
+        if after_id is not None:
             try:
-                self.after_cancel(self.autosave_after_id)
+                self.after_cancel(after_id)
             except tk.TclError:
                 pass
-            self.autosave_after_id = None
+            setattr(self, attribute_name, None)
+
+    def _cancel_alert_callbacks(self, close_popup=False):
+        self._cancel_after_id("alert_after_id")
+        self._cancel_after_id("popup_after_id")
+        self._cancel_after_id("flash_after_id")
+        self.stop_completion_sound()
+        if close_popup and self.completion_window is not None and self.completion_window.winfo_exists():
+            self.completion_window.destroy()
+            self.completion_window = None
+
+    def _cancel_scheduled_callbacks(self):
+        for attribute_name in (
+            "tick_after_id",
+            "alert_after_id",
+            "popup_after_id",
+            "flash_after_id",
+            "autosave_after_id",
+            "progress_after_id",
+            "initial_bounds_after_id",
+            "input_apply_after_id",
+            "minutes_select_after_id",
+            "seconds_select_after_id",
+        ):
+            self._cancel_after_id(attribute_name)
+        self.stop_completion_sound()
+
+    def close(self):
+        self._cancel_scheduled_callbacks()
         self._save_state()
         self.destroy()
+
+    def destroy(self):
+        self._cancel_scheduled_callbacks()
+        super().destroy()
 
 
 def main():
