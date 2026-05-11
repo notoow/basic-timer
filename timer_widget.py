@@ -19,12 +19,14 @@ APP_DIR = Path(__file__).resolve().parent
 ASSET_DIR = APP_DIR / "assets"
 LOGO_FILE = ASSET_DIR / "notoow_logo.png"
 STATE_FILE = APP_DIR / "timer_widget_state.json"
+STATE_TEMP_FILE = APP_DIR / "timer_widget_state.tmp"
 STARTUP_SHORTCUT_NAME = "Basic Timer.cmd"
 APP_TITLE = "Basic Timer"
 WIDGET_WIDTH = 360
 FULL_HEIGHT = 270
 COMPACT_HEIGHT = 184
 DEFAULT_QUICK_MINUTES = (5, 10, 25, 50, 60)
+VALID_SOUND_MODES = {"default", "short", "long", "silent", "custom"}
 MAX_MINUTES = 999
 MAX_TOTAL_SECONDS = MAX_MINUTES * 60 + 59
 READY_COLOR = "#f7f0df"
@@ -134,6 +136,7 @@ class TimerWidget(tk.Tk):
         self.app_icon_image = None
         self.restore_running_after_init = False
         self.restore_completion_after_init = False
+        self.state_load_notice = None
 
         self._load_state()
         self._configure_window()
@@ -158,10 +161,16 @@ class TimerWidget(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self.close)
 
     def _configure_window(self):
-        self.alpha = float(self._state.get("alpha", self.alpha))
-        self.always_on_top = bool(self._state.get("always_on_top", self.always_on_top))
-        self.compact = bool(self._state.get("compact", self.compact))
-        self.sound_mode.set(str(self._state.get("sound_mode", self.sound_mode.get())))
+        self.alpha = self._state_float("alpha", self.alpha, 0.35, 1.0)
+        self.always_on_top = self._state_bool(
+            "always_on_top",
+            self._state_bool("pinned", self.always_on_top),
+        )
+        self.compact = self._state_bool("compact", self.compact)
+        sound_mode = str(self._state.get("sound_mode", self.sound_mode.get())).strip().lower()
+        if sound_mode not in VALID_SOUND_MODES:
+            sound_mode = "default"
+        self.sound_mode.set(sound_mode)
         self.custom_sound_path = str(self._state.get("custom_sound_path", ""))
         if self.custom_sound_path:
             self.custom_sound_label_text.set(Path(self.custom_sound_path).name)
@@ -170,12 +179,14 @@ class TimerWidget(tk.Tk):
         except (TypeError, ValueError):
             self.sound_repeat.set(3)
         self.quick_minutes = self._normalize_quick_minutes(self._state.get("quick_minutes", DEFAULT_QUICK_MINUTES))
-        minutes = str(self._state.get("minutes", self.duration_minutes.get()))
-        seconds = str(self._state.get("seconds", self.duration_seconds.get()))
+        minutes = str(self._state_int("minutes", self.duration_minutes.get(), 0, MAX_MINUTES))
+        seconds = str(self._state_int("seconds", self.duration_seconds.get(), 0, 59))
         self.duration_minutes.set(minutes)
         self.duration_seconds.set(seconds)
         self.remaining_seconds = self._current_total_seconds()
         self._restore_timer_state()
+        if self.state_load_notice and not self.running and not self.finished:
+            self.status_text.set(self.state_load_notice)
         height = COMPACT_HEIGHT if self.compact else FULL_HEIGHT
 
         x, y = self._saved_position()
@@ -193,7 +204,7 @@ class TimerWidget(tk.Tk):
             except (TypeError, ValueError):
                 pass
 
-        if bool(self._state.get("timer_running", False)):
+        if self._state_bool("timer_running", False):
             deadline_wall_time = self._state.get("deadline_wall_time")
             try:
                 remaining = float(deadline_wall_time) - time.time()
@@ -214,7 +225,7 @@ class TimerWidget(tk.Tk):
                 self.finished = True
                 self.status_text.set("시간 끝")
                 self.restore_completion_after_init = True
-        elif bool(self._state.get("timer_finished", False)):
+        elif self._state_bool("timer_finished", False):
             self.remaining_seconds = 0
             self.deadline = None
             self.running = False
@@ -1005,9 +1016,66 @@ class TimerWidget(tk.Tk):
         if not STATE_FILE.exists():
             return
         try:
-            self._state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+            loaded_state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
+            self._quarantine_invalid_state()
             self._state = {}
+            return
+        if not isinstance(loaded_state, dict):
+            self._quarantine_invalid_state()
+            self._state = {}
+            return
+        self._state = loaded_state
+
+    def _quarantine_invalid_state(self):
+        try:
+            STATE_FILE.replace(self._invalid_state_backup_path())
+            self.state_load_notice = "설정 복구됨"
+        except OSError:
+            self.state_load_notice = "설정 초기화됨"
+
+    def _invalid_state_backup_path(self):
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        for index in range(100):
+            suffix = f"-{index}" if index else ""
+            path = APP_DIR / f"timer_widget_state.invalid-{timestamp}{suffix}.json"
+            if not path.exists():
+                return path
+        return APP_DIR / f"timer_widget_state.invalid-{timestamp}-{int(time.time() * 1000)}.json"
+
+    def _state_bool(self, key, default):
+        value = self._state.get(key, default)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value != 0
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "y", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "n", "off", ""}:
+                return False
+        return bool(default)
+
+    def _state_int(self, key, default, minimum, maximum):
+        try:
+            value = int(str(self._state.get(key, default)).strip())
+        except (TypeError, ValueError):
+            try:
+                value = int(default)
+            except (TypeError, ValueError):
+                value = minimum
+        return max(minimum, min(maximum, value))
+
+    def _state_float(self, key, default, minimum, maximum):
+        try:
+            value = float(str(self._state.get(key, default)).strip())
+        except (TypeError, ValueError):
+            try:
+                value = float(default)
+            except (TypeError, ValueError):
+                value = minimum
+        return max(minimum, min(maximum, value))
 
     def _save_state(self):
         x, y, width, height = self._window_bounds()
@@ -1034,7 +1102,8 @@ class TimerWidget(tk.Tk):
             "deadline_wall_time": deadline_wall_time,
         }
         try:
-            STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+            STATE_TEMP_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+            STATE_TEMP_FILE.replace(STATE_FILE)
         except OSError:
             pass
 
