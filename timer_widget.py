@@ -5,6 +5,7 @@ import re
 import sys
 import time
 import tkinter as tk
+import tkinter.font as tkfont
 from ctypes import byref, windll, wintypes
 from pathlib import Path
 from tkinter import filedialog
@@ -146,10 +147,14 @@ class TimerWidget(tk.Tk):
         self.input_apply_after_id = None
         self.time_edit_apply_after_id = None
         self.time_edit_focus_after_id = None
+        self.duration_edit_focus_after_id = None
         self.minutes_select_after_id = None
         self.seconds_select_after_id = None
         self.time_edit_active = False
         self.time_edit_dirty = False
+        self.time_edit_snapshot = None
+        self.duration_edit_dirty = False
+        self.duration_edit_snapshot = None
         self.logo_source_image = None
         self.logo_image = None
         self.app_icon_image = None
@@ -524,12 +529,12 @@ class TimerWidget(tk.Tk):
             validate="key",
             validatecommand=minute_validation,
         )
-        self.minutes_entry.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        self.minutes_entry.pack(side="left", padx=(0, 4))
         self.minutes_entry.bind("<Button-1>", self.select_minutes_text)
-        self.minutes_entry.bind("<FocusIn>", self.select_minutes_text)
+        self.minutes_entry.bind("<FocusIn>", self.begin_duration_edit)
         self.minutes_entry.bind("<KeyRelease>", self.apply_custom_minutes_live)
-        self.minutes_entry.bind("<Return>", lambda _event: self.apply_custom_minutes())
-        self.minutes_entry.bind("<FocusOut>", lambda _event: self.apply_custom_minutes())
+        self.minutes_entry.bind("<Return>", self.finish_duration_edit)
+        self.minutes_entry.bind("<FocusOut>", self.close_duration_edit_if_focus_left)
 
         label = tk.Label(custom_row, text="min", bg="#161616", fg="#aaa395", font=("Segoe UI", 9))
         label.configure(bg="#202020")
@@ -548,15 +553,18 @@ class TimerWidget(tk.Tk):
             validate="key",
             validatecommand=second_validation,
         )
-        self.seconds_entry.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        self.seconds_entry.pack(side="left", padx=(0, 4))
         self.seconds_entry.bind("<Button-1>", self.select_seconds_text)
-        self.seconds_entry.bind("<FocusIn>", self.select_seconds_text)
+        self.seconds_entry.bind("<FocusIn>", self.begin_duration_edit)
         self.seconds_entry.bind("<KeyRelease>", self.apply_custom_minutes_live)
-        self.seconds_entry.bind("<Return>", lambda _event: self.apply_custom_minutes())
-        self.seconds_entry.bind("<FocusOut>", lambda _event: self.apply_custom_minutes())
+        self.seconds_entry.bind("<Return>", self.finish_duration_edit)
+        self.seconds_entry.bind("<FocusOut>", self.close_duration_edit_if_focus_left)
 
         seconds_label = tk.Label(custom_row, text="sec", bg="#202020", fg="#aaa395", font=("Segoe UI", 9))
         seconds_label.pack(side="left", padx=(0, 6))
+
+        spacer = tk.Frame(custom_row, bg="#202020")
+        spacer.pack(side="left", fill="x", expand=True)
 
         plus_button = self._chip_button(custom_row, "+1", lambda: self.bump_minutes(1))
         plus_button.pack(side="left", padx=(0, 6))
@@ -1048,10 +1056,11 @@ class TimerWidget(tk.Tk):
         minutes, seconds = divmod(total_seconds, 60)
         self.time_edit_minutes.set(str(minutes))
         self.time_edit_seconds.set(str(seconds))
+        self.time_edit_snapshot = (self.time_edit_minutes.get(), self.time_edit_seconds.get())
         self.time_edit_dirty = False
         self.time_edit_active = True
 
-        focus_seconds = bool(event and event.x >= self.time_label.winfo_width() * 0.58)
+        focus_seconds = self._time_click_targets_seconds(event)
         self.time_label.pack_forget()
         self.time_edit_frame.pack(fill="x")
 
@@ -1059,6 +1068,22 @@ class TimerWidget(tk.Tk):
         target.focus_set()
         self.select_entry_text(target)
         return "break"
+
+    def _time_click_targets_seconds(self, event=None):
+        if event is None:
+            return False
+        formatted_time = self.time_text.get()
+        seconds_separator_index = formatted_time.rfind(":")
+        if seconds_separator_index < 0:
+            return False
+        try:
+            label_font = tkfont.Font(font=self.time_label.cget("font"))
+            text_width = label_font.measure(formatted_time)
+            text_left = max(0, (self.time_label.winfo_width() - text_width) / 2)
+            seconds_left = text_left + label_font.measure(formatted_time[: seconds_separator_index + 1])
+            return event.x >= seconds_left
+        except tk.TclError:
+            return event.x >= self.time_label.winfo_width() * 0.55
 
     def select_entry_text(self, entry):
         self.after_idle(lambda: self._select_entry_text_after_idle(entry))
@@ -1070,6 +1095,11 @@ class TimerWidget(tk.Tk):
     def apply_time_edit_live(self, _event=None):
         if not self.time_edit_active:
             return None
+        current_value = (self.time_edit_minutes.get(), self.time_edit_seconds.get())
+        if self.time_edit_snapshot is None:
+            self.time_edit_snapshot = current_value
+        if not self.time_edit_dirty and current_value == self.time_edit_snapshot:
+            return None
         self.time_edit_dirty = True
         if self.time_edit_apply_after_id is None:
             self.time_edit_apply_after_id = self.after_idle(self._apply_time_edit_after_idle)
@@ -1077,12 +1107,12 @@ class TimerWidget(tk.Tk):
 
     def _apply_time_edit_after_idle(self):
         self.time_edit_apply_after_id = None
-        self.apply_time_edit()
+        self.apply_time_edit(normalize_empty=False)
 
-    def apply_time_edit(self):
+    def apply_time_edit(self, normalize_empty=True):
         self.duration_minutes.set(self.time_edit_minutes.get().strip())
         self.duration_seconds.set(self.time_edit_seconds.get().strip())
-        self.apply_custom_minutes()
+        self.apply_custom_minutes(normalize_empty=normalize_empty)
 
     def finish_time_edit(self, _event=None):
         self.close_time_edit()
@@ -1119,14 +1149,71 @@ class TimerWidget(tk.Tk):
             except tk.TclError:
                 pass
             self.time_edit_apply_after_id = None
-        if self.time_edit_dirty:
-            self.apply_time_edit()
+        current_value = (self.time_edit_minutes.get(), self.time_edit_seconds.get())
+        changed = self.time_edit_dirty or (
+            self.time_edit_snapshot is not None and self.time_edit_snapshot != current_value
+        )
+        if changed:
+            self.apply_time_edit(normalize_empty=True)
         self.time_edit_dirty = False
+        self.time_edit_snapshot = None
         self.time_edit_active = False
         if self.time_edit_frame.winfo_ismapped():
             self.time_edit_frame.pack_forget()
         self.time_label.pack(fill="x")
         self._update_display()
+
+    def begin_duration_edit(self, event=None):
+        if self.duration_edit_snapshot is None:
+            self.duration_edit_snapshot = (self.duration_minutes.get(), self.duration_seconds.get())
+        if event is not None:
+            self.select_entry_text(event.widget)
+        return None
+
+    def close_duration_edit_if_focus_left(self, _event=None):
+        if self.duration_edit_focus_after_id is not None:
+            try:
+                self.after_cancel(self.duration_edit_focus_after_id)
+            except tk.TclError:
+                pass
+        self.duration_edit_focus_after_id = self.after_idle(self._close_duration_edit_if_focus_left)
+        return None
+
+    def _close_duration_edit_if_focus_left(self):
+        self.duration_edit_focus_after_id = None
+        focused = self.focus_get()
+        if focused in {self.minutes_entry, self.seconds_entry}:
+            return
+        self.finish_duration_edit()
+
+    def finish_duration_edit(self, _event=None):
+        if self.duration_edit_focus_after_id is not None:
+            try:
+                self.after_cancel(self.duration_edit_focus_after_id)
+            except tk.TclError:
+                pass
+            self.duration_edit_focus_after_id = None
+        if self.input_apply_after_id is not None:
+            try:
+                self.after_cancel(self.input_apply_after_id)
+            except tk.TclError:
+                pass
+            self.input_apply_after_id = None
+        current_value = (self.duration_minutes.get(), self.duration_seconds.get())
+        changed = self.duration_edit_dirty or (
+            self.duration_edit_snapshot is not None and self.duration_edit_snapshot != current_value
+        )
+        if changed:
+            self.apply_custom_minutes(normalize_empty=True)
+        self.duration_edit_dirty = False
+        self.duration_edit_snapshot = None
+        return "break" if _event is not None else None
+
+    def commit_pending_edits(self):
+        if self.time_edit_active:
+            self.close_time_edit()
+        else:
+            self.finish_duration_edit()
 
     def select_minutes_text(self, _event=None):
         if self.minutes_select_after_id is None:
@@ -1452,6 +1539,7 @@ class TimerWidget(tk.Tk):
             self.remaining_seconds = max(0, (self.deadline or time.monotonic()) - time.monotonic())
 
     def set_duration(self, minutes):
+        self.commit_pending_edits()
         if self.running:
             self.pause_timer()
         minutes = max(0, min(MAX_MINUTES, int(minutes)))
@@ -1464,6 +1552,7 @@ class TimerWidget(tk.Tk):
         self.schedule_state_save()
 
     def add_minutes(self, minutes):
+        self.commit_pending_edits()
         self._sync_remaining_from_deadline()
         add_seconds = minutes * 60
 
@@ -1484,6 +1573,7 @@ class TimerWidget(tk.Tk):
         self.schedule_state_save()
 
     def subtract_minutes(self, minutes):
+        self.commit_pending_edits()
         self._sync_remaining_from_deadline()
         subtract_seconds = minutes * 60
 
@@ -1513,7 +1603,7 @@ class TimerWidget(tk.Tk):
         self._update_display()
         self.schedule_state_save()
 
-    def apply_custom_minutes(self):
+    def apply_custom_minutes(self, normalize_empty=True):
         minute_value = self.duration_minutes.get().strip()
         second_value = self.duration_seconds.get().strip()
         if minute_value == "" and second_value == "":
@@ -1528,9 +1618,9 @@ class TimerWidget(tk.Tk):
 
         seconds = self._current_total_seconds()
         minutes, seconds_part = divmod(seconds, 60)
-        if minute_value == "":
+        if normalize_empty and minute_value == "":
             self.duration_minutes.set("0")
-        if second_value == "":
+        if normalize_empty and second_value == "":
             self.duration_seconds.set("0")
         self.finished = False
         self.remaining_seconds = seconds
@@ -1550,12 +1640,19 @@ class TimerWidget(tk.Tk):
         self.schedule_state_save()
 
     def apply_custom_minutes_live(self, _event=None):
+        current_value = (self.duration_minutes.get(), self.duration_seconds.get())
+        if self.duration_edit_snapshot is None:
+            self.duration_edit_snapshot = current_value
+        if not self.duration_edit_dirty and current_value == self.duration_edit_snapshot:
+            return None
+        self.duration_edit_dirty = True
         if self.input_apply_after_id is None:
             self.input_apply_after_id = self.after_idle(self._apply_custom_minutes_after_idle)
+        return None
 
     def _apply_custom_minutes_after_idle(self):
         self.input_apply_after_id = None
-        self.apply_custom_minutes()
+        self.apply_custom_minutes(normalize_empty=False)
 
     def bump_minutes(self, delta):
         if delta > 0:
@@ -1572,6 +1669,7 @@ class TimerWidget(tk.Tk):
     def start_timer(self):
         if self.running:
             return
+        self.commit_pending_edits()
         self._cancel_alert_callbacks(close_popup=True)
         self.apply_custom_minutes() if self.remaining_seconds <= 0 else None
         if self.remaining_seconds <= 0:
@@ -1612,6 +1710,7 @@ class TimerWidget(tk.Tk):
         self.schedule_state_save()
 
     def reset_timer(self):
+        self.commit_pending_edits()
         self.running = False
         self.finished = False
         self.deadline = None
@@ -1900,6 +1999,7 @@ class TimerWidget(tk.Tk):
             "input_apply_after_id",
             "time_edit_apply_after_id",
             "time_edit_focus_after_id",
+            "duration_edit_focus_after_id",
             "minutes_select_after_id",
             "seconds_select_after_id",
         ):
