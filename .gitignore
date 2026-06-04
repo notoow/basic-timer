@@ -4,3 +4,6 @@ timer_widget_state.json
 timer_widget_state.tmp
 timer_widget_state.invalid*.json
 timer_widget_error.log
+build/
+dist/
+*.spec

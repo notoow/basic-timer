@@ -15,8 +15,21 @@ except ImportError:  # pragma: no cover - Windows-only nicety.
     winsound = None
 
 
-APP_DIR = Path(__file__).resolve().parent
-ASSET_DIR = APP_DIR / "assets"
+def runtime_dir():
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def resource_dir():
+    bundled_dir = getattr(sys, "_MEIPASS", None)
+    if bundled_dir:
+        return Path(bundled_dir)
+    return runtime_dir()
+
+
+APP_DIR = runtime_dir()
+ASSET_DIR = resource_dir() / "assets"
 LOGO_FILE = ASSET_DIR / "notoow_logo.png"
 STATE_FILE = APP_DIR / "timer_widget_state.json"
 STATE_TEMP_FILE = APP_DIR / "timer_widget_state.tmp"
@@ -102,6 +115,8 @@ class TimerWidget(tk.Tk):
         self.custom_sound_path = ""
         self.custom_sound_label_text = tk.StringVar(value="선택된 WAV 없음")
         self.time_text = tk.StringVar(value="25:00")
+        self.time_edit_minutes = tk.StringVar(value="25")
+        self.time_edit_seconds = tk.StringVar(value="0")
 
         self.remaining_seconds = 25 * 60
         self.running = False
@@ -129,8 +144,12 @@ class TimerWidget(tk.Tk):
         self.initial_bounds_after_id = None
         self.taskbar_after_id = None
         self.input_apply_after_id = None
+        self.time_edit_apply_after_id = None
+        self.time_edit_focus_after_id = None
         self.minutes_select_after_id = None
         self.seconds_select_after_id = None
+        self.time_edit_active = False
+        self.time_edit_dirty = False
         self.logo_source_image = None
         self.logo_image = None
         self.app_icon_image = None
@@ -314,15 +333,77 @@ class TimerWidget(tk.Tk):
         )
         compact_button.pack(side="right", padx=(0, 6))
 
+        minute_validation = (self.register(self.validate_minutes_input), "%P")
+        second_validation = (self.register(self.validate_seconds_input), "%P")
+        self.time_area = tk.Frame(self.shell, bg="#161616")
+        self.time_area.pack(fill="x", padx=14, pady=(8, 0))
+
         self.time_label = tk.Label(
-            self.shell,
+            self.time_area,
             textvariable=self.time_text,
             bg="#161616",
             fg=READY_COLOR,
             font=("Segoe UI Semibold", 38),
+            cursor="hand2",
         )
-        self.time_label.pack(fill="x", padx=14, pady=(8, 0))
+        self.time_label.pack(fill="x")
         self._make_draggable(self.time_label)
+        self.time_label.bind("<ButtonRelease-1>", self.open_time_edit_from_click, add="+")
+
+        self.time_edit_frame = tk.Frame(self.time_area, bg="#161616")
+        time_edit_inner = tk.Frame(self.time_edit_frame, bg="#161616")
+        time_edit_inner.pack(anchor="center")
+
+        self.time_minutes_entry = tk.Entry(
+            time_edit_inner,
+            textvariable=self.time_edit_minutes,
+            width=4,
+            justify="center",
+            bg="#151515",
+            fg="#f7f0df",
+            insertbackground="#f7f0df",
+            relief="flat",
+            font=("Segoe UI Semibold", 30),
+            validate="key",
+            validatecommand=minute_validation,
+        )
+        self.time_minutes_entry.pack(side="left")
+        self.time_minutes_entry.bind("<Button-1>", lambda event: self.select_entry_text(event.widget))
+        self.time_minutes_entry.bind("<FocusIn>", lambda event: self.select_entry_text(event.widget))
+        self.time_minutes_entry.bind("<KeyRelease>", self.apply_time_edit_live)
+        self.time_minutes_entry.bind("<Return>", self.finish_time_edit)
+        self.time_minutes_entry.bind("<Escape>", self.finish_time_edit)
+        self.time_minutes_entry.bind("<FocusOut>", self.close_time_edit_if_focus_left)
+
+        time_separator = tk.Label(
+            time_edit_inner,
+            text=":",
+            bg="#161616",
+            fg="#aaa395",
+            font=("Segoe UI Semibold", 30),
+        )
+        time_separator.pack(side="left", padx=4)
+
+        self.time_seconds_entry = tk.Entry(
+            time_edit_inner,
+            textvariable=self.time_edit_seconds,
+            width=2,
+            justify="center",
+            bg="#151515",
+            fg="#f7f0df",
+            insertbackground="#f7f0df",
+            relief="flat",
+            font=("Segoe UI Semibold", 30),
+            validate="key",
+            validatecommand=second_validation,
+        )
+        self.time_seconds_entry.pack(side="left")
+        self.time_seconds_entry.bind("<Button-1>", lambda event: self.select_entry_text(event.widget))
+        self.time_seconds_entry.bind("<FocusIn>", lambda event: self.select_entry_text(event.widget))
+        self.time_seconds_entry.bind("<KeyRelease>", self.apply_time_edit_live)
+        self.time_seconds_entry.bind("<Return>", self.finish_time_edit)
+        self.time_seconds_entry.bind("<Escape>", self.finish_time_edit)
+        self.time_seconds_entry.bind("<FocusOut>", self.close_time_edit_if_focus_left)
 
         self.status_label = tk.Label(
             self.shell,
@@ -430,8 +511,6 @@ class TimerWidget(tk.Tk):
         minus_button = self._chip_button(custom_row, "-1", lambda: self.bump_minutes(-1))
         minus_button.pack(side="left", padx=(6, 5))
 
-        minute_validation = (self.register(self.validate_minutes_input), "%P")
-        second_validation = (self.register(self.validate_seconds_input), "%P")
         self.minutes_entry = tk.Entry(
             custom_row,
             textvariable=self.duration_minutes,
@@ -485,6 +564,7 @@ class TimerWidget(tk.Tk):
         self.bind("<Button-3>", self.show_menu)
         self.shell.bind("<Button-3>", self.show_menu)
         self.titlebar.bind("<Button-3>", self.show_menu)
+        self.time_area.bind("<Button-3>", self.show_menu)
         self.time_label.bind("<Button-3>", self.show_menu)
         self.status_label.bind("<Button-3>", self.show_menu)
         self.actions.bind("<Button-3>", self.show_menu)
@@ -924,7 +1004,7 @@ class TimerWidget(tk.Tk):
         shortcut_path = self.startup_shortcut_path()
         if self.start_with_windows.get():
             shortcut_path.parent.mkdir(parents=True, exist_ok=True)
-            launcher = APP_DIR / "run_timer_widget.bat"
+            launcher = Path(sys.executable).resolve() if getattr(sys, "frozen", False) else APP_DIR / "run_timer_widget.bat"
             shortcut_path.write_text(
                 f'@echo off\r\nstart "" "{launcher}"\r\n',
                 encoding="utf-8",
@@ -954,6 +1034,99 @@ class TimerWidget(tk.Tk):
         widget.bind("<ButtonPress-1>", self.start_drag)
         widget.bind("<B1-Motion>", self.drag)
         widget.bind("<ButtonRelease-1>", self.finish_drag)
+
+    def open_time_edit_from_click(self, event=None):
+        if self.time_edit_active or self._modal_window_open():
+            return "break"
+
+        pointer_x, pointer_y = self._pointer_position()
+        if abs(pointer_x - self.drag_start_pointer_x) > 4 or abs(pointer_y - self.drag_start_pointer_y) > 4:
+            return None
+
+        self._sync_remaining_from_deadline()
+        total_seconds = max(0, min(MAX_TOTAL_SECONDS, int(math.ceil(self.remaining_seconds))))
+        minutes, seconds = divmod(total_seconds, 60)
+        self.time_edit_minutes.set(str(minutes))
+        self.time_edit_seconds.set(str(seconds))
+        self.time_edit_dirty = False
+        self.time_edit_active = True
+
+        focus_seconds = bool(event and event.x >= self.time_label.winfo_width() * 0.58)
+        self.time_label.pack_forget()
+        self.time_edit_frame.pack(fill="x")
+
+        target = self.time_seconds_entry if focus_seconds else self.time_minutes_entry
+        target.focus_set()
+        self.select_entry_text(target)
+        return "break"
+
+    def select_entry_text(self, entry):
+        self.after_idle(lambda: self._select_entry_text_after_idle(entry))
+
+    def _select_entry_text_after_idle(self, entry):
+        if entry is not None and entry.winfo_exists():
+            entry.selection_range(0, tk.END)
+
+    def apply_time_edit_live(self, _event=None):
+        if not self.time_edit_active:
+            return None
+        self.time_edit_dirty = True
+        if self.time_edit_apply_after_id is None:
+            self.time_edit_apply_after_id = self.after_idle(self._apply_time_edit_after_idle)
+        return None
+
+    def _apply_time_edit_after_idle(self):
+        self.time_edit_apply_after_id = None
+        self.apply_time_edit()
+
+    def apply_time_edit(self):
+        self.duration_minutes.set(self.time_edit_minutes.get().strip())
+        self.duration_seconds.set(self.time_edit_seconds.get().strip())
+        self.apply_custom_minutes()
+
+    def finish_time_edit(self, _event=None):
+        self.close_time_edit()
+        return "break"
+
+    def close_time_edit_if_focus_left(self, _event=None):
+        if self.time_edit_focus_after_id is not None:
+            try:
+                self.after_cancel(self.time_edit_focus_after_id)
+            except tk.TclError:
+                pass
+        self.time_edit_focus_after_id = self.after_idle(self._close_time_edit_if_focus_left)
+        return None
+
+    def _close_time_edit_if_focus_left(self):
+        self.time_edit_focus_after_id = None
+        focused = self.focus_get()
+        if focused in {self.time_minutes_entry, self.time_seconds_entry}:
+            return
+        self.close_time_edit()
+
+    def close_time_edit(self):
+        if not self.time_edit_active:
+            return
+        if self.time_edit_focus_after_id is not None:
+            try:
+                self.after_cancel(self.time_edit_focus_after_id)
+            except tk.TclError:
+                pass
+            self.time_edit_focus_after_id = None
+        if self.time_edit_apply_after_id is not None:
+            try:
+                self.after_cancel(self.time_edit_apply_after_id)
+            except tk.TclError:
+                pass
+            self.time_edit_apply_after_id = None
+        if self.time_edit_dirty:
+            self.apply_time_edit()
+        self.time_edit_dirty = False
+        self.time_edit_active = False
+        if self.time_edit_frame.winfo_ismapped():
+            self.time_edit_frame.pack_forget()
+        self.time_label.pack(fill="x")
+        self._update_display()
 
     def select_minutes_text(self, _event=None):
         if self.minutes_select_after_id is None:
@@ -1725,6 +1898,8 @@ class TimerWidget(tk.Tk):
             "initial_bounds_after_id",
             "taskbar_after_id",
             "input_apply_after_id",
+            "time_edit_apply_after_id",
+            "time_edit_focus_after_id",
             "minutes_select_after_id",
             "seconds_select_after_id",
         ):
