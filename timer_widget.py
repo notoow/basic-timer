@@ -1,3 +1,4 @@
+import ast
 import ctypes
 import json
 import math
@@ -37,8 +38,9 @@ STATE_TEMP_FILE = APP_DIR / "timer_widget_state.tmp"
 STARTUP_SHORTCUT_NAME = "Basic Timer.cmd"
 APP_TITLE = "Basic Timer"
 WIDGET_WIDTH = 360
-FULL_HEIGHT = 270
+FULL_HEIGHT = 620
 COMPACT_HEIGHT = 184
+CALCULATOR_MAX_CHARS = 36
 DEFAULT_QUICK_MINUTES = (5, 10, 25, 50, 60)
 VALID_SOUND_MODES = {"default", "short", "long", "silent", "custom"}
 MAX_MINUTES = 999
@@ -118,6 +120,9 @@ class TimerWidget(tk.Tk):
         self.time_text = tk.StringVar(value="25:00")
         self.time_edit_minutes = tk.StringVar(value="25")
         self.time_edit_seconds = tk.StringVar(value="0")
+        self.calculator_text = tk.StringVar(value="0")
+        self.calculator_expression = ""
+        self.calculator_just_evaluated = False
 
         self.remaining_seconds = 25 * 60
         self.running = False
@@ -569,6 +574,8 @@ class TimerWidget(tk.Tk):
         plus_button = self._chip_button(custom_row, "+1", lambda: self.bump_minutes(1))
         plus_button.pack(side="left", padx=(0, 6))
 
+        self._build_calculator_card()
+
         self.bind("<Button-3>", self.show_menu)
         self.shell.bind("<Button-3>", self.show_menu)
         self.titlebar.bind("<Button-3>", self.show_menu)
@@ -576,6 +583,7 @@ class TimerWidget(tk.Tk):
         self.time_label.bind("<Button-3>", self.show_menu)
         self.status_label.bind("<Button-3>", self.show_menu)
         self.actions.bind("<Button-3>", self.show_menu)
+        self.calculator_card.bind("<Button-3>", self.show_menu)
 
         self._make_draggable(self.shell)
         self._make_draggable(self.progress)
@@ -704,6 +712,238 @@ class TimerWidget(tk.Tk):
             font=("Segoe UI", 9),
             cursor="hand2",
         )
+
+    def _calculator_button(self, parent, text, command, role="digit"):
+        palette = {
+            "digit": ("#242424", "#f4ead8", "#383838"),
+            "utility": ("#303030", "#d8d1c4", "#404040"),
+            "operator": ("#352b20", "#ffc884", "#4a3824"),
+            "equals": ("#f28c38", "#171717", "#ffad5f"),
+        }
+        bg, fg, active_bg = palette.get(role, palette["digit"])
+        return tk.Button(
+            parent,
+            text=text,
+            command=command,
+            bg=bg,
+            fg=fg,
+            activebackground=active_bg,
+            activeforeground="#ffffff" if role != "equals" else "#171717",
+            relief="flat",
+            bd=0,
+            padx=6,
+            pady=7,
+            font=("Segoe UI", 10, "bold" if role in {"operator", "equals"} else "normal"),
+            cursor="hand2",
+        )
+
+    def _build_calculator_card(self):
+        self.calculator_card = tk.Frame(
+            self.shell,
+            bg="#202020",
+            highlightthickness=1,
+            highlightbackground="#343434",
+        )
+        self.calculator_card.pack(fill="x", padx=12, pady=(0, 10), ipady=6)
+        self._make_draggable(self.calculator_card)
+
+        header = tk.Frame(self.calculator_card, bg="#202020")
+        header.pack(fill="x", padx=8, pady=(6, 5))
+        self._make_draggable(header)
+
+        title = tk.Label(
+            header,
+            text="계산기",
+            bg="#202020",
+            fg="#f7f0df",
+            font=("Malgun Gothic", 9, "bold"),
+        )
+        title.pack(side="left")
+        self._make_draggable(title)
+
+        hint = tk.Label(
+            header,
+            text="사칙연산 카드",
+            bg="#202020",
+            fg="#8d877b",
+            font=("Malgun Gothic", 8),
+        )
+        hint.pack(side="right")
+        self._make_draggable(hint)
+
+        display = tk.Label(
+            self.calculator_card,
+            textvariable=self.calculator_text,
+            anchor="e",
+            bg="#151515",
+            fg="#fff7e8",
+            padx=10,
+            pady=6,
+            font=("Segoe UI Semibold", 16),
+        )
+        display.pack(fill="x", padx=8, pady=(0, 6))
+        self._make_draggable(display)
+
+        grid = tk.Frame(self.calculator_card, bg="#202020")
+        grid.pack(fill="x", padx=6)
+        for column in range(4):
+            grid.columnconfigure(column, weight=1, uniform="calculator")
+
+        buttons = (
+            (
+                ("C", self.clear_calculator, "utility"),
+                ("⌫", self.backspace_calculator, "utility"),
+                ("%", self.percent_calculator, "utility"),
+                ("÷", lambda: self.append_calculator_operator("/"), "operator"),
+            ),
+            (
+                ("7", lambda: self.append_calculator_digit("7"), "digit"),
+                ("8", lambda: self.append_calculator_digit("8"), "digit"),
+                ("9", lambda: self.append_calculator_digit("9"), "digit"),
+                ("×", lambda: self.append_calculator_operator("*"), "operator"),
+            ),
+            (
+                ("4", lambda: self.append_calculator_digit("4"), "digit"),
+                ("5", lambda: self.append_calculator_digit("5"), "digit"),
+                ("6", lambda: self.append_calculator_digit("6"), "digit"),
+                ("−", lambda: self.append_calculator_operator("-"), "operator"),
+            ),
+            (
+                ("1", lambda: self.append_calculator_digit("1"), "digit"),
+                ("2", lambda: self.append_calculator_digit("2"), "digit"),
+                ("3", lambda: self.append_calculator_digit("3"), "digit"),
+                ("+", lambda: self.append_calculator_operator("+"), "operator"),
+            ),
+            (
+                ("0", lambda: self.append_calculator_digit("0"), "digit"),
+                (".", lambda: self.append_calculator_digit("."), "digit"),
+                ("±", self.toggle_calculator_sign, "utility"),
+                ("=", self.evaluate_calculator, "equals"),
+            ),
+        )
+        for row_index, row in enumerate(buttons):
+            for column_index, (text, command, role) in enumerate(row):
+                button = self._calculator_button(grid, text, command, role)
+                button.grid(row=row_index, column=column_index, sticky="nsew", padx=2, pady=2)
+
+    def _set_calculator_expression(self, expression, just_evaluated=False):
+        self.calculator_expression = expression[:CALCULATOR_MAX_CHARS]
+        self.calculator_just_evaluated = just_evaluated
+        display_text = self.calculator_expression or "0"
+        self.calculator_text.set(display_text.replace("*", "×").replace("/", "÷").replace("-", "−"))
+
+    def append_calculator_digit(self, value):
+        if self.calculator_just_evaluated or self.calculator_expression == "Error":
+            expression = ""
+        else:
+            expression = self.calculator_expression
+
+        if len(expression) >= CALCULATOR_MAX_CHARS:
+            return
+
+        token = value
+        if token == ".":
+            current = self._current_calculator_number(expression)
+            if "." in current:
+                return
+            if not current:
+                token = "0."
+
+        self._set_calculator_expression(expression + token)
+
+    def append_calculator_operator(self, operator):
+        expression = "" if self.calculator_expression == "Error" else self.calculator_expression
+        if not expression:
+            if operator == "-":
+                self._set_calculator_expression("-")
+            return
+
+        if expression[-1] in "+-*/.":
+            expression = expression[:-1]
+        if len(expression) >= CALCULATOR_MAX_CHARS - 1:
+            return
+        self._set_calculator_expression(expression + operator)
+
+    def clear_calculator(self):
+        self._set_calculator_expression("")
+
+    def backspace_calculator(self):
+        if self.calculator_expression == "Error":
+            self.clear_calculator()
+            return
+        self._set_calculator_expression(self.calculator_expression[:-1])
+
+    def percent_calculator(self):
+        expression = self.calculator_expression
+        if not expression or expression == "Error":
+            return
+        if len(expression) <= CALCULATOR_MAX_CHARS - 6:
+            self._set_calculator_expression(f"({expression})/100")
+
+    def toggle_calculator_sign(self):
+        expression = self.calculator_expression
+        if not expression or expression == "Error":
+            self._set_calculator_expression("-")
+            return
+        if expression.startswith("-"):
+            self._set_calculator_expression(expression[1:])
+        else:
+            if len(expression) <= CALCULATOR_MAX_CHARS - 3:
+                self._set_calculator_expression(f"-({expression})")
+
+    def _current_calculator_number(self, expression):
+        match = re.search(r"([0-9.]+)$", expression)
+        return match.group(1) if match else ""
+
+    def evaluate_calculator(self):
+        expression = self.calculator_expression
+        if not expression or expression == "Error":
+            return
+        try:
+            result = self._safe_calculator_eval(expression)
+        except (SyntaxError, ValueError, ZeroDivisionError, OverflowError):
+            self._set_calculator_expression("Error", just_evaluated=True)
+            return
+
+        if not math.isfinite(result):
+            self._set_calculator_expression("Error", just_evaluated=True)
+            return
+
+        if math.isclose(result, round(result), abs_tol=1e-10):
+            output = str(int(round(result)))
+        else:
+            output = f"{result:.10g}"
+        self._set_calculator_expression(output, just_evaluated=True)
+
+    def _safe_calculator_eval(self, expression):
+        if not re.fullmatch(r"[0-9+\-*/().\s]+", expression):
+            raise ValueError("Unsupported calculator input")
+        tree = ast.parse(expression, mode="eval")
+        return self._eval_calculator_node(tree.body)
+
+    def _eval_calculator_node(self, node):
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return float(node.value)
+        if isinstance(node, ast.UnaryOp):
+            operand = self._eval_calculator_node(node.operand)
+            if isinstance(node.op, ast.UAdd):
+                return operand
+            if isinstance(node.op, ast.USub):
+                return -operand
+        if isinstance(node, ast.BinOp):
+            left = self._eval_calculator_node(node.left)
+            right = self._eval_calculator_node(node.right)
+            if isinstance(node.op, ast.Add):
+                return left + right
+            if isinstance(node.op, ast.Sub):
+                return left - right
+            if isinstance(node.op, ast.Mult):
+                return left * right
+            if isinstance(node.op, ast.Div):
+                if math.isclose(right, 0.0, abs_tol=1e-12):
+                    raise ZeroDivisionError
+                return left / right
+        raise ValueError("Unsupported calculator expression")
 
     def _split_minute_button(self, parent, minutes):
         button = tk.Canvas(
@@ -1939,9 +2179,11 @@ class TimerWidget(tk.Tk):
         self.compact_button_text.set("Full" if self.compact else "Mini")
         if self.compact:
             self.controls.pack_forget()
+            self.calculator_card.pack_forget()
             self._resize_at_current_position(WIDGET_WIDTH, COMPACT_HEIGHT)
         else:
             self.controls.pack(fill="x", padx=12)
+            self.calculator_card.pack(fill="x", padx=12, pady=(0, 10), ipady=6)
             self._resize_at_current_position(WIDGET_WIDTH, FULL_HEIGHT)
 
     def _resize_at_current_position(self, width, height):
